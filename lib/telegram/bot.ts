@@ -1,11 +1,12 @@
 import { Bot } from 'grammy';
 import { handleMessage } from './handlers/message';
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
+const token = process.env.TELEGRAM_BOT_TOKEN || '';
 
+// Не выбрасываем ошибку при импорте - проверка будет в адаптере
+// Это важно для serverless окружения (Vercel)
 if (!token) {
   console.error('TELEGRAM_BOT_TOKEN не установлен в переменных окружения!');
-  throw new Error('TELEGRAM_BOT_TOKEN is required');
 }
 
 const bot = new Bot(token);
