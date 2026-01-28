@@ -102,8 +102,8 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     messages.push({ role: 'user', content: messageText });
     await saveMessage({ user_id: telegramId, role: 'user', content: messageText });
 
-    const toolChoice = isReminderIntent(messageText)
-      ? { type: 'function', function: { name: 'add_reminder' } }
+    const toolChoice: OpenAI.Chat.ChatCompletionToolChoiceOption = isReminderIntent(messageText)
+      ? ({ type: 'function', function: { name: 'add_reminder' } } as const)
       : 'auto';
 
     const response = await withTimeout(
