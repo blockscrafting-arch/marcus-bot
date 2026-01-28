@@ -1,13 +1,13 @@
 # Telegram Bot на Next.js
 
-Минималистичный Telegram бот на Next.js (App Router, TypeScript) с интеграцией OpenAI.
+Минималистичный Telegram бот на Next.js (App Router, TypeScript) с интеграцией DeepSeek AI.
 
 ## Технологии
 
 - Next.js 14 (App Router)
 - TypeScript
 - grammy (Telegram Bot API)
-- OpenAI API
+- DeepSeek AI API (DeepSeek-V3.2-Exp)
 
 ## Структура проекта
 
@@ -18,13 +18,13 @@ app/
       route.ts          # Webhook endpoint для Telegram
 lib/
   openai/
-    client.ts           # OpenAI клиент
+    client.ts           # DeepSeek клиент (OpenAI-совместимый)
     prompt.ts           # Системный промпт для Marcus
   telegram/
     bot.ts              # Инициализация бота grammy
     adapter.ts          # Адаптер Next.js Request/Response для grammy
     handlers/
-      message.ts        # Обработчик текстовых сообщений с OpenAI
+      message.ts        # Обработчик текстовых сообщений с DeepSeek
 ```
 
 ## Установка
@@ -37,8 +37,9 @@ lib/
 3. Создайте файл `.env.local`:
    ```
    TELEGRAM_BOT_TOKEN=your_bot_token_here
-   OPENAI_API_KEY=your_openai_key_here
+   DEEPSEEK_API_KEY=your_deepseek_key_here
    ```
+   Примечание: также поддерживается `OPENAI_API_KEY` для обратной совместимости.
 4. Запустите dev сервер:
    ```bash
    npm run dev
@@ -49,7 +50,7 @@ lib/
 1. Подключите репозиторий к Vercel
 2. Добавьте переменные окружения в настройках проекта:
    - `TELEGRAM_BOT_TOKEN`
-   - `OPENAI_API_KEY`
+   - `DEEPSEEK_API_KEY` (или `OPENAI_API_KEY` для обратной совместимости)
 3. Деплой произойдет автоматически
 
 ## Настройка webhook

@@ -42,7 +42,7 @@ ssh $SERVER << 'ENDSSH'
     
     echo "✅ Деплой завершен!"
     echo "⚠️ Не забудьте:"
-    echo "1. Создать файл .env.local с TELEGRAM_BOT_TOKEN и OPENAI_API_KEY"
+    echo "1. Создать файл .env.local с TELEGRAM_BOT_TOKEN и DEEPSEEK_API_KEY"
     echo "2. Настроить PM2 или systemd для автозапуска"
     echo "3. Настроить webhook через API Telegram"
 ENDSSH

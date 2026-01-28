@@ -59,8 +59,9 @@ nano .env.local
 Добавьте:
 ```
 TELEGRAM_BOT_TOKEN=ваш_токен_бота
-OPENAI_API_KEY=ваш_ключ_openai
+DEEPSEEK_API_KEY=ваш_ключ_deepseek
 ```
+Примечание: также поддерживается `OPENAI_API_KEY` для обратной совместимости.
 
 ## Шаг 4: Запуск через PM2
 

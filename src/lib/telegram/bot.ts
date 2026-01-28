@@ -1,29 +1,30 @@
 import { Bot } from 'grammy';
-import { handleMessage } from './handlers/message';
+import { handleTextMessage } from './handlers/text';
+import { handleVoiceMessage } from './handlers/voice';
+import { logger } from '@/lib/utils/logger';
 
 const token = process.env.TELEGRAM_BOT_TOKEN || '';
 
 // Не выбрасываем ошибку при импорте - проверка будет в адаптере
 // Это важно для serverless окружения (Vercel)
 if (!token) {
-  console.error('TELEGRAM_BOT_TOKEN не установлен в переменных окружения!');
+  logger.error('TELEGRAM_BOT_TOKEN не установлен в переменных окружения!');
 }
 
 const bot = new Bot(token);
 
-// Регистрируем обработчик сообщений
-bot.on('message:text', handleMessage);
+// Регистрируем обработчики сообщений
+bot.on('message:text', async (ctx) => {
+  const text = ctx.message?.text;
+  if (text) {
+    await handleTextMessage(ctx, text);
+  }
+});
+bot.on('message:voice', handleVoiceMessage);
 
 // Обработка ошибок бота
 bot.catch((err) => {
-  console.error('=== Ошибка в боте ===');
-  console.error('Тип ошибки:', err?.constructor?.name);
-  if (err instanceof Error) {
-    console.error('Сообщение:', err.message);
-    console.error('Stack:', err.stack);
-  } else {
-    console.error('Объект ошибки:', err);
-  }
+  logger.error({ err }, 'Ошибка в боте');
 });
 
 // Не инициализируем бота при импорте - это будет сделано при первом запросе
