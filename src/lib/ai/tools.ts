@@ -192,12 +192,22 @@ export async function executeToolCall(
     }
 
     if (name === 'add_reminder' || name === 'schedule_followup') {
-      await addReminder({
+      const triggerAt = String(args.trigger_at || '');
+      if (!isValidIsoDateTime(triggerAt)) {
+        return JSON.stringify({
+          error: 'INVALID_TRIGGER_AT',
+          message: 'trigger_at должен быть ISO 8601 с таймзоной',
+        });
+      }
+      const result = await addReminder({
         user_id: context.userId,
         message: String(args.message || ''),
-        trigger_at: String(args.trigger_at || ''),
+        trigger_at: triggerAt,
         repeat_pattern: args.repeat_pattern || null,
       });
+      if (!result.ok) {
+        return JSON.stringify({ error: 'REMINDER_SAVE_FAILED', message: result.error });
+      }
       return JSON.stringify({ ok: true });
     }
 
@@ -211,5 +221,14 @@ export async function executeToolCall(
     logger.error({ error, tool: name }, 'Ошибка при выполнении tool call');
     return JSON.stringify({ error: 'Tool execution failed' });
   }
+}
+
+/**
+ * Проверяет ISO 8601 дату/время с таймзоной.
+ */
+function isValidIsoDateTime(value: string): boolean {
+  if (!value || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime());
 }
 

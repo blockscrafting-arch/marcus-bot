@@ -13,7 +13,9 @@ export type ReminderRecord = {
 /**
  * Создает напоминание.
  */
-export async function addReminder(reminder: ReminderRecord): Promise<void> {
+export async function addReminder(
+  reminder: ReminderRecord
+): Promise<{ ok: boolean; error?: string }> {
   const { error } = await supabase.from('marcus_reminders').insert({
     user_id: reminder.user_id,
     message: reminder.message,
@@ -23,7 +25,9 @@ export async function addReminder(reminder: ReminderRecord): Promise<void> {
   });
   if (error) {
     logger.error({ error, userId: reminder.user_id }, 'Ошибка при создании напоминания');
+    return { ok: false, error: error.message };
   }
+  return { ok: true };
 }
 
 /**

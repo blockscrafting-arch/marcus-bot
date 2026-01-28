@@ -13,6 +13,16 @@ import { logger } from '@/lib/utils/logger';
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 25000);
 
 /**
+ * Определяет, похоже ли сообщение на запрос напоминания.
+ */
+function isReminderIntent(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const hasReminderVerb = /(напомни|напоминани|постав(ь|ьте)\s+напоминани|будильник)/i.test(normalized);
+  const hasTimeHint = /(завтра|послезавтра|утром|вечером|\bв\s?\d{1,2}(:\d{2})?)/i.test(normalized);
+  return hasReminderVerb || hasTimeHint;
+}
+
+/**
  * Выполняет промис с таймаутом.
  */
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -85,13 +95,18 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     }
 
     messages.push({ role: 'user', content: messageText });
+    await saveMessage({ user_id: telegramId, role: 'user', content: messageText });
+
+    const toolChoice = isReminderIntent(messageText)
+      ? { type: 'function', function: { name: 'add_reminder' } }
+      : 'auto';
 
     const response = await withTimeout(
       openRouter.chat.completions.create({
         model: defaultChatModel,
         messages,
         tools,
-        tool_choice: 'auto',
+        tool_choice: toolChoice,
       }),
       OPENROUTER_TIMEOUT_MS
     );
@@ -131,7 +146,6 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
 
     const botReply = assistantMessage?.content || 'Ошибка при получении ответа от AI';
 
-    await saveMessage({ user_id: telegramId, role: 'user', content: messageText });
     try {
       await ctx.reply(botReply);
       logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
