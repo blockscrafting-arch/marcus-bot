@@ -10,7 +10,7 @@ import { formatUserTime } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
 import { logger } from '@/lib/utils/logger';
 
-const OPENROUTER_TIMEOUT_MS = 12000;
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 25000);
 
 /**
  * Выполняет промис с таймаутом.
@@ -140,7 +140,10 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     }
     await saveMessage({ user_id: telegramId, role: 'assistant', content: botReply });
   } catch (error) {
-    logger.error({ error, userId: telegramId }, 'Ошибка при обработке сообщения');
+    logger.error(
+      { err: error, userId: telegramId, model: defaultChatModel, timeoutMs: OPENROUTER_TIMEOUT_MS },
+      'Ошибка при обработке сообщения'
+    );
     let errorMessage = 'Произошла ошибка при обработке вашего сообщения. Попробуйте позже.';
     if (error instanceof Error && error.message.includes('Timeout')) {
       errorMessage = 'Запрос занял слишком много времени. Попробуйте позже.';

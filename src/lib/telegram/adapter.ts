@@ -73,7 +73,19 @@ export async function handleWebhook(req: NextRequest): Promise<Response> {
     }
     
     // Обрабатываем обновление напрямую через бота
-    // Telegram требует быстрый ответ, поэтому обрабатываем синхронно
+    // В Railway можно отвечать быстро и обрабатывать асинхронно
+    const asyncWebhook = process.env.WEBHOOK_ASYNC === 'true';
+    if (asyncWebhook) {
+      void bot
+        .handleUpdate(body)
+        .then(() => logger.info('Обновление обработано успешно'))
+        .catch((updateError) => logger.error({ updateError }, 'Ошибка при обработке обновления'));
+      return new Response('OK', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    }
+
     try {
       await bot.handleUpdate(body);
       logger.info('Обновление обработано успешно');
