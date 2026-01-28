@@ -1,4 +1,5 @@
 import { Context } from 'grammy';
+import OpenAI from 'openai';
 import { openRouter, defaultChatModel } from '@/lib/ai/client';
 import { getSystemPrompt } from '@/lib/ai/prompt';
 import { tools, executeToolCall } from '@/lib/ai/tools';
@@ -70,7 +71,7 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     }
     const memoryBlock = memorySnippets.length ? `\n# MEMORY\n${memorySnippets.map((m) => `- ${m}`).join('\n')}` : '';
 
-    const messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string }> = [];
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
     messages.push({ role: 'system', content: systemPromptBase + memoryBlock });
 
     if (historyMessages.length > 0) {
