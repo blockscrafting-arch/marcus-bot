@@ -6,6 +6,7 @@ import { tools, executeToolCall } from '@/lib/ai/tools';
 import { retrieveMemories } from '@/lib/ai/memory/retrieval';
 import { upsertUser, getUser } from '@/lib/db/users';
 import { getRecentMessages, saveMessage } from '@/lib/db/messages';
+import { ensureDailyCareReminder } from '@/lib/services/care';
 import { formatUserTime } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
 import { logger } from '@/lib/utils/logger';
@@ -19,7 +20,10 @@ function isReminderIntent(text: string): boolean {
   const normalized = text.toLowerCase();
   const hasReminderVerb = /(напомни|напоминани|постав(ь|ьте)\s+напоминани|будильник)/i.test(normalized);
   const hasTimeHint = /(завтра|послезавтра|утром|вечером|\bв\s?\d{1,2}(:\d{2})?)/i.test(normalized);
-  return hasReminderVerb || hasTimeHint;
+  const hasRoutineHint = /(каждый день|ежедневно|каждое утро|каждый вечер|по будням|по выходным|рутин)/i.test(
+    normalized
+  );
+  return hasReminderVerb || hasTimeHint || hasRoutineHint;
 }
 
 /**
@@ -72,6 +76,7 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     const timeZone = userRecord?.timezone || 'Europe/Moscow';
     const currentTime = formatUserTime(timeZone);
     const systemPromptBase = getSystemPrompt(user.first_name || 'Пользователь', user.username, currentTime, timeZone);
+    await ensureDailyCareReminder(telegramId, timeZone);
 
     const historyMessages = await getRecentMessages(telegramId, 10);
     let memorySnippets: string[] = [];

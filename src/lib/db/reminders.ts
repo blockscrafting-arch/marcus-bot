@@ -74,3 +74,28 @@ export async function listUpcomingReminders(userId: number, limit = 5): Promise<
   return (data as ReminderRecord[] | null) || [];
 }
 
+/**
+ * Ищет напоминание по точному тексту сообщения.
+ */
+export async function findReminderByMessage(
+  userId: number,
+  message: string,
+  repeatPattern?: string
+): Promise<ReminderRecord | null> {
+  let query = supabase
+    .from('marcus_reminders')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('message', message)
+    .eq('sent', false);
+  if (repeatPattern) {
+    query = query.eq('repeat_pattern', repeatPattern);
+  }
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    logger.error({ error, userId }, 'Ошибка при поиске напоминания');
+    return null;
+  }
+  return (data as ReminderRecord) || null;
+}
+

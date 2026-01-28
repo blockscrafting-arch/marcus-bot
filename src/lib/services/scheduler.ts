@@ -1,7 +1,8 @@
 import bot from '@/lib/telegram/bot';
-import { getDueReminders, markReminderSent } from '@/lib/db/reminders';
-import { listUsersWithPreference } from '@/lib/db/users';
+import { addReminder, getDueReminders, markReminderSent } from '@/lib/db/reminders';
+import { getUser, listUsersWithPreference } from '@/lib/db/users';
 import { logger } from '@/lib/utils/logger';
+import { getNextTriggerAt } from '@/lib/utils/time';
 
 /**
  * Отправляет просроченные напоминания.
@@ -22,6 +23,19 @@ export async function processReminders(): Promise<number> {
       await bot.api.sendMessage(reminder.user_id, `Напоминание: ${reminder.message}`);
       await markReminderSent(reminder.id);
       sentCount += 1;
+      if (reminder.repeat_pattern) {
+        const user = await getUser(reminder.user_id);
+        const timeZone = user?.timezone || 'Europe/Moscow';
+        const nextTriggerAt = getNextTriggerAt(reminder.trigger_at, reminder.repeat_pattern, timeZone);
+        if (nextTriggerAt) {
+          await addReminder({
+            user_id: reminder.user_id,
+            message: reminder.message,
+            trigger_at: nextTriggerAt,
+            repeat_pattern: reminder.repeat_pattern,
+          });
+        }
+      }
     } catch (error) {
       logger.error({ error, reminderId: reminder.id, userId: reminder.user_id }, 'Ошибка отправки напоминания');
     }
