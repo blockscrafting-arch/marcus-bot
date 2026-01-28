@@ -41,6 +41,7 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
 
   const telegramId = user.id;
   logger.info({ userId: telegramId, messageLength: messageText.length }, 'Получено сообщение');
+  const startedAtMs = Date.now();
 
   const limiter = rateLimit(`user:${telegramId}`, { maxTokens: 5, refillPerSecond: 1 });
   if (!limiter.allowed) {
@@ -94,9 +95,17 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
       }),
       OPENROUTER_TIMEOUT_MS
     );
+    logger.info(
+      { userId: telegramId, durationMs: Date.now() - startedAtMs },
+      'Ответ от модели получен'
+    );
 
     let assistantMessage = response.choices[0]?.message;
     if (assistantMessage?.tool_calls?.length) {
+      logger.info(
+        { userId: telegramId, toolCalls: assistantMessage.tool_calls.map((t) => t.function.name) },
+        'Модель запросила инструменты'
+      );
       for (const toolCall of assistantMessage.tool_calls) {
         const toolResult = await executeToolCall(toolCall, { userId: telegramId });
         messages.push({
@@ -113,13 +122,22 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
         }),
         OPENROUTER_TIMEOUT_MS
       );
+      logger.info(
+        { userId: telegramId, durationMs: Date.now() - startedAtMs },
+        'Ответ от модели после tool calls получен'
+      );
       assistantMessage = secondResponse.choices[0]?.message;
     }
 
     const botReply = assistantMessage?.content || 'Ошибка при получении ответа от AI';
 
     await saveMessage({ user_id: telegramId, role: 'user', content: messageText });
-    await ctx.reply(botReply);
+    try {
+      await ctx.reply(botReply);
+      logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
+    } catch (replyError) {
+      logger.error({ replyError, userId: telegramId }, 'Не удалось отправить ответ пользователю');
+    }
     await saveMessage({ user_id: telegramId, role: 'assistant', content: botReply });
   } catch (error) {
     logger.error({ error, userId: telegramId }, 'Ошибка при обработке сообщения');
@@ -129,6 +147,7 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     }
     try {
       await ctx.reply(errorMessage);
+      logger.info({ userId: telegramId }, 'Сообщение об ошибке отправлено пользователю');
     } catch (replyError) {
       logger.error({ replyError, userId: telegramId }, 'Не удалось отправить сообщение об ошибке пользователю');
     }
