@@ -1,29 +1,31 @@
-import { addReminder, findReminderByMessage } from '@/lib/db/reminders';
-import { getNextLocalTimeIso } from '@/lib/utils/time';
+import { addReminder, findReminderByMessage, updateReminderTriggerAt } from '@/lib/db/reminders';
+import { getLastUserMessageTime } from '@/lib/db/messages';
+import { getLocalParts, getNextLocalTimeIso } from '@/lib/utils/time';
 import { logger } from '@/lib/utils/logger';
 
-const CARE_MESSAGE =
-  process.env.CARE_CHECKIN_MESSAGE ||
-  'Как ты себя чувствуешь? Как прошел день и сколько энергии по шкале 1-10?';
-
-const CARE_TIME = process.env.CARE_CHECKIN_TIME || '21:00';
+const CARE_MESSAGE = 'Как ты себя чувствуешь? Как прошел день и сколько энергии по шкале 1-10?';
+const CARE_WINDOW_START = 19;
+const CARE_WINDOW_END = 22;
 
 /**
  * Создает ежедневное напоминание заботы, если его еще нет.
  */
 export async function ensureDailyCareReminder(userId: number, timeZone: string | undefined): Promise<void> {
   const existing = await findReminderByMessage(userId, CARE_MESSAGE, 'daily');
-  if (existing) return;
+  const lastMessageAt = await getLastUserMessageTime(userId);
+  const { hour, minute } = inferCareTime(lastMessageAt, timeZone);
+  const triggerAt = getNextLocalTimeIso(timeZone, hour, minute);
 
-  const [hourRaw, minuteRaw] = CARE_TIME.split(':');
-  const hour = Number(hourRaw);
-  const minute = Number(minuteRaw || '0');
-  if (Number.isNaN(hour) || Number.isNaN(minute)) {
-    logger.error({ careTime: CARE_TIME }, 'Некорректный CARE_CHECKIN_TIME');
+  if (existing?.id) {
+    const existingTime = new Date(existing.trigger_at).getTime();
+    const nextTime = new Date(triggerAt).getTime();
+    if (Number.isFinite(existingTime) && Math.abs(existingTime - nextTime) > 30 * 60 * 1000) {
+      await updateReminderTriggerAt(existing.id, triggerAt);
+      logger.info({ userId, triggerAt }, 'Обновлено время напоминания заботы');
+    }
     return;
   }
 
-  const triggerAt = getNextLocalTimeIso(timeZone, hour, minute);
   const result = await addReminder({
     user_id: userId,
     message: CARE_MESSAGE,
@@ -35,5 +37,27 @@ export async function ensureDailyCareReminder(userId: number, timeZone: string |
   } else {
     logger.info({ userId, triggerAt }, 'Создано ежедневное напоминание заботы');
   }
+}
+
+/**
+ * Выбирает время для заботы на основе активности пользователя.
+ */
+function inferCareTime(
+  lastMessageAt: Date | null,
+  timeZone: string | undefined
+): { hour: number; minute: number } {
+  if (!lastMessageAt) {
+    return { hour: 21, minute: 0 };
+  }
+  const local = getLocalParts(lastMessageAt, timeZone);
+  if (local.hour >= CARE_WINDOW_START && local.hour <= CARE_WINDOW_END) {
+    const nextHour = Math.min(local.hour + 1, CARE_WINDOW_END);
+    const minute = local.minute >= 30 ? 0 : 30;
+    return { hour: nextHour, minute };
+  }
+  if (local.hour < 12) {
+    return { hour: 20, minute: 30 };
+  }
+  return { hour: 21, minute: 0 };
 }
 

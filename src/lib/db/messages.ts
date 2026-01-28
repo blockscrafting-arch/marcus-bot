@@ -33,3 +33,25 @@ export async function getRecentMessages(userId: number, limit = 10): Promise<Mes
   }
   return (data as MessageRecord[] | null) || [];
 }
+
+/**
+ * Возвращает время последнего сообщения пользователя.
+ */
+export async function getLastUserMessageTime(userId: number): Promise<Date | null> {
+  const { data, error } = await supabase
+    .from('marcus_messages')
+    .select('created_at')
+    .eq('user_id', userId)
+    .eq('role', 'user')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.error({ error, userId }, 'Ошибка при загрузке времени последнего сообщения');
+    return null;
+  }
+  const timestamp = (data as { created_at?: string } | null)?.created_at;
+  if (!timestamp) return null;
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}

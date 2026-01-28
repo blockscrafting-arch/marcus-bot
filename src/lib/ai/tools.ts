@@ -193,6 +193,15 @@ export async function executeToolCall(
 
     if (name === 'add_reminder' || name === 'schedule_followup') {
       const triggerAt = String(args.trigger_at || '');
+      const messageText = String(args.message || '');
+      const inferredRepeat = inferRepeatPatternFromMessage(messageText);
+      const repeatPattern = String(args.repeat_pattern || '') || inferredRepeat;
+      if (repeatPattern === 'weekday' || repeatPattern === 'weekend') {
+        return JSON.stringify({
+          error: 'UNSUPPORTED_REPEAT_PATTERN',
+          message: 'Для будней/выходных укажи конкретные дни или частоту.',
+        });
+      }
       if (!isValidIsoDateTime(triggerAt)) {
         return JSON.stringify({
           error: 'INVALID_TRIGGER_AT',
@@ -201,9 +210,9 @@ export async function executeToolCall(
       }
       const result = await addReminder({
         user_id: context.userId,
-        message: String(args.message || ''),
+        message: messageText,
         trigger_at: triggerAt,
-        repeat_pattern: args.repeat_pattern || null,
+        repeat_pattern: repeatPattern || null,
       });
       if (!result.ok) {
         return JSON.stringify({ error: 'REMINDER_SAVE_FAILED', message: result.error });
@@ -230,5 +239,18 @@ function isValidIsoDateTime(value: string): boolean {
   if (!value || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return false;
   const date = new Date(value);
   return !Number.isNaN(date.getTime());
+}
+
+/**
+ * Выводит repeat_pattern из текста.
+ */
+function inferRepeatPatternFromMessage(text: string): string {
+  const normalized = text.toLowerCase();
+  if (/(каждый день|ежедневно|каждое утро|каждый вечер)/i.test(normalized)) return 'daily';
+  if (/по будням/i.test(normalized)) return 'weekday';
+  if (/по выходным/i.test(normalized)) return 'weekend';
+  if (/каждую неделю|еженедельно/i.test(normalized)) return 'weekly';
+  if (/каждый месяц|ежемесячно/i.test(normalized)) return 'monthly';
+  return '';
 }
 

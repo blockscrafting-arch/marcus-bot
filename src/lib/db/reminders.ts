@@ -99,3 +99,13 @@ export async function findReminderByMessage(
   return (data as ReminderRecord) || null;
 }
 
+/**
+ * Обновляет время напоминания.
+ */
+export async function updateReminderTriggerAt(id: string, triggerAt: string): Promise<void> {
+  const { error } = await supabase.from('marcus_reminders').update({ trigger_at: triggerAt }).eq('id', id);
+  if (error) {
+    logger.error({ error, reminderId: id }, 'Ошибка при обновлении trigger_at');
+  }
+}
+
