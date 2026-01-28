@@ -27,6 +27,110 @@ function isReminderIntent(text: string): boolean {
 }
 
 /**
+ * Проверяет, нужно ли показать список напоминаний.
+ */
+function isListRemindersIntent(text: string, lastAssistantMessage: string | null): boolean {
+  const normalized = text.toLowerCase().trim();
+  if (/спис(ок|ка)\s+напоминан|покажи\s+напоминан|проверь\s+напоминан|напоминани(я|е)\s+есть/i.test(normalized)) {
+    return true;
+  }
+  if (/^(да|давай|ок|ага)$/i.test(normalized) && lastAssistantMessage) {
+    return /(список|проверить|list_reminders|напоминани)/i.test(lastAssistantMessage.toLowerCase());
+  }
+  return false;
+}
+
+type ToolResponse = {
+  name: string;
+  args: Record<string, any>;
+  result: Record<string, any>;
+};
+
+/**
+ * Пытается сформировать ответ без повторного вызова LLM.
+ */
+function buildToolResponse(
+  toolResponses: ToolResponse[],
+  timeZone: string
+): { reply: string; skipModel: boolean } | null {
+  if (toolResponses.length === 0) return null;
+
+  const errorResponse = toolResponses.find((item) => item.result?.error);
+  if (errorResponse) {
+    const error = String(errorResponse.result.error || '');
+    if (error === 'INVALID_TRIGGER_AT') {
+      return {
+        reply: 'Я не понял точное время. Укажи его явно, например: "завтра в 08:00".',
+        skipModel: true,
+      };
+    }
+    if (error === 'UNSUPPORTED_REPEAT_PATTERN') {
+      return {
+        reply: 'Для будней/выходных укажи конкретные дни или частоту (например: "каждый понедельник").',
+        skipModel: true,
+      };
+    }
+    if (error === 'REMINDER_SAVE_FAILED') {
+      return {
+        reply: 'Не удалось сохранить напоминание. Давай повторим еще раз.',
+        skipModel: true,
+      };
+    }
+    return { reply: 'Возникла ошибка при выполнении действия. Попробуй еще раз.', skipModel: true };
+  }
+
+  const listTool = toolResponses.find((item) => item.name === 'list_reminders');
+  if (listTool) {
+    const reminders = (listTool.result?.reminders || []) as Array<{
+      trigger_at?: string;
+      message?: string;
+      repeat_pattern?: string | null;
+    }>;
+    if (!reminders.length) {
+      return { reply: 'Список напоминаний пуст. Хочешь, я создам новое?', skipModel: true };
+    }
+    const lines = reminders.map((reminder) => {
+      const when = reminder.trigger_at ? formatUserTime(timeZone, new Date(reminder.trigger_at)) : 'без времени';
+      const repeatLabel = reminder.repeat_pattern
+        ? `, повтор: ${mapRepeatLabel(reminder.repeat_pattern)}`
+        : '';
+      return `- ${when} — ${reminder.message || 'напоминание'}${repeatLabel}`;
+    });
+    return { reply: `Вот твои напоминания:\n${lines.join('\n')}`, skipModel: true };
+  }
+
+  const addTool = toolResponses.find((item) => item.name === 'add_reminder');
+  if (addTool) {
+    const triggerAt = String(addTool.args.trigger_at || '');
+    const message = String(addTool.args.message || 'напоминание');
+    const repeatPattern = String(addTool.args.repeat_pattern || '');
+    const when = triggerAt ? formatUserTime(timeZone, new Date(triggerAt)) : 'в ближайшее время';
+    const repeatLabel = repeatPattern ? `, повтор: ${mapRepeatLabel(repeatPattern)}` : '';
+    return {
+      reply: `Ок, напоминание создано: ${when} — ${message}${repeatLabel}.`,
+      skipModel: true,
+    };
+  }
+
+  return null;
+}
+
+function mapRepeatLabel(pattern: string): string {
+  if (pattern === 'daily') return 'ежедневно';
+  if (pattern === 'weekly') return 'еженедельно';
+  if (pattern === 'monthly') return 'ежемесячно';
+  return pattern;
+}
+
+function safeJsonParse(value: string): Record<string, any> {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Выполняет промис с таймаутом.
  */
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -79,6 +183,8 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     await ensureDailyCareReminder(telegramId, timeZone);
 
     const historyMessages = await getRecentMessages(telegramId, 10);
+    const lastAssistantMessage =
+      [...historyMessages].find((item) => item.role === 'assistant')?.content || null;
     let memorySnippets: string[] = [];
     try {
       memorySnippets = await retrieveMemories(telegramId, messageText);
@@ -102,9 +208,14 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
     messages.push({ role: 'user', content: messageText });
     await saveMessage({ user_id: telegramId, role: 'user', content: messageText });
 
-    const toolChoice: OpenAI.Chat.ChatCompletionToolChoiceOption = isReminderIntent(messageText)
-      ? ({ type: 'function', function: { name: 'add_reminder' } } as const)
-      : 'auto';
+    const toolChoice: OpenAI.Chat.ChatCompletionToolChoiceOption = isListRemindersIntent(
+      messageText,
+      lastAssistantMessage
+    )
+      ? ({ type: 'function', function: { name: 'list_reminders' } } as const)
+      : isReminderIntent(messageText)
+        ? ({ type: 'function', function: { name: 'add_reminder' } } as const)
+        : 'auto';
 
     const response = await withTimeout(
       openRouter.chat.completions.create({
@@ -122,6 +233,7 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
 
     let assistantMessage = response.choices[0]?.message;
     if (assistantMessage?.tool_calls?.length) {
+      const toolResponses: ToolResponse[] = [];
       logger.info(
         { userId: telegramId, toolCalls: assistantMessage.tool_calls.map((t) => t.function.name) },
         'Модель запросила инструменты'
@@ -133,12 +245,30 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
           content: toolResult,
           tool_call_id: toolCall.id,
         });
+        toolResponses.push({
+          name: toolCall.function.name,
+          args: safeJsonParse(toolCall.function.arguments || '{}'),
+          result: safeJsonParse(toolResult),
+        });
+      }
+
+      const directResponse = buildToolResponse(toolResponses, timeZone);
+      if (directResponse?.skipModel) {
+        try {
+          await ctx.reply(directResponse.reply);
+          logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
+        } catch (replyError) {
+          logger.error({ replyError, userId: telegramId }, 'Не удалось отправить ответ пользователю');
+        }
+        await saveMessage({ user_id: telegramId, role: 'assistant', content: directResponse.reply });
+        return;
       }
 
       const secondResponse = await withTimeout(
         openRouter.chat.completions.create({
           model: defaultChatModel,
           messages,
+          tool_choice: 'none',
         }),
         OPENROUTER_TIMEOUT_MS
       );
