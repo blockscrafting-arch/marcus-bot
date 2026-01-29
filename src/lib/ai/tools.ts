@@ -61,6 +61,21 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'think',
+      description:
+        'Записать шаги рассуждения перед ответом. Используй для сложных или неоднозначных вопросов. Можно вызывать несколько раз.',
+      parameters: {
+        type: 'object',
+        properties: {
+          thought: { type: 'string', description: 'Шаги рассуждения' },
+        },
+        required: ['thought'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'add_memory',
       description: 'Сохранить факт в долгосрочную память',
       parameters: {
@@ -208,6 +223,12 @@ export async function executeToolCall(
       const time = formatUserTime(tz, now);
       const iso = formatUserIso(tz, now);
       return JSON.stringify({ time, time_zone: tz, iso });
+    }
+
+    if (name === 'think') {
+      const thought = String(args.thought || '').trim();
+      if (thought) logger.debug({ thought: thought.slice(0, 200) }, 'think');
+      return JSON.stringify({ ok: true });
     }
 
     if (name === 'add_memory') {

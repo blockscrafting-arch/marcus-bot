@@ -27,4 +27,3 @@ export async function GET(req: NextRequest): Promise<Response> {
 export async function POST(req: NextRequest): Promise<Response> {
   return runCron();
 }
-

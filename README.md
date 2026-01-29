@@ -76,4 +76,3 @@ curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
 select trigger_at at time zone 'Europe/Moscow' as trigger_at_msk
 from marcus_reminders;
 ```
-

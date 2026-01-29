@@ -234,4 +234,3 @@ export function getNextFutureTriggerAt(
   }
   return null;
 }
-
