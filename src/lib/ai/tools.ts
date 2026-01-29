@@ -7,7 +7,7 @@ import { addReminder, listUpcomingReminders } from '@/lib/db/reminders';
 import { createEmbedding } from '@/lib/ai/memory/embeddings';
 import { retrieveMemories } from '@/lib/ai/memory/retrieval';
 import { logger } from '@/lib/utils/logger';
-import { parseIsoToLocalParts, toUtcIsoFromLocalParts } from '@/lib/utils/time';
+import { normalizeIsoAsMsk } from '@/lib/utils/time';
 
 export type ToolContext = {
   userId: number;
@@ -244,14 +244,13 @@ export async function executeToolCall(
           message: 'Для будней/выходных укажи конкретные дни или частоту.',
         });
       }
-      const parts = parseIsoToLocalParts(triggerAtRaw);
-      if (!parts) {
+      const triggerAtUtc = normalizeIsoAsMsk(triggerAtRaw);
+      if (!triggerAtUtc) {
         return JSON.stringify({
           error: 'INVALID_TRIGGER_AT',
           message: 'trigger_at должен быть ISO 8601 (например 2026-01-29T18:00:00+03:00), время в MSK',
         });
       }
-      const triggerAtUtc = toUtcIsoFromLocalParts(parts, 'Europe/Moscow');
       const result = await addReminder({
         user_id: context.userId,
         message: messageText,

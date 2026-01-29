@@ -11,7 +11,7 @@ import { saveMemory, deactivateMemoryByContent, matchMemories } from '@/lib/db/m
 import { addTask } from '@/lib/db/tasks';
 import { addReminder } from '@/lib/db/reminders';
 import { ensureDailyCareReminder } from '@/lib/services/care';
-import { formatUserTime, parseIsoToLocalParts, toUtcIsoFromLocalParts } from '@/lib/utils/time';
+import { formatUserTime, normalizeIsoAsMsk } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
 import { needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
 import { logger } from '@/lib/utils/logger';
@@ -113,7 +113,7 @@ function buildToolResponse(
       return { reply: 'Список напоминаний пуст. Хочешь, я создам новое?', skipModel: true };
     }
     const lines = reminders.map((reminder) => {
-      const when = reminder.trigger_at ? formatUserTime(timeZone, new Date(reminder.trigger_at)) : 'без времени';
+      const when = reminder.trigger_at ? formatUserTime('Europe/Moscow', new Date(reminder.trigger_at)) : 'без времени';
       const repeatLabel = reminder.repeat_pattern
         ? `, повтор: ${mapRepeatLabel(reminder.repeat_pattern)}`
         : '';
@@ -127,7 +127,7 @@ function buildToolResponse(
     const triggerAt = String(addTool.args.trigger_at || '');
     const message = String(addTool.args.message || 'напоминание');
     const repeatPattern = String(addTool.args.repeat_pattern || '');
-    const when = triggerAt ? formatUserTime(timeZone, new Date(triggerAt)) : 'в ближайшее время';
+    const when = triggerAt ? formatUserTime('Europe/Moscow', new Date(triggerAt)) : 'в ближайшее время';
     const repeatLabel = repeatPattern ? `, повтор: ${mapRepeatLabel(repeatPattern)}` : '';
     return {
       reply: `Ок, напоминание создано: ${when} — ${message}${repeatLabel}.`,
@@ -456,9 +456,8 @@ async function maybePersistArtifacts(
       const message = String(r.message || '').trim();
       const triggerAtRaw = String(r.trigger_at || '').trim();
       if (!message) continue;
-      const parts = parseIsoToLocalParts(triggerAtRaw);
-      if (!parts) continue;
-      const triggerAtUtc = toUtcIsoFromLocalParts(parts, 'Europe/Moscow');
+      const triggerAtUtc = normalizeIsoAsMsk(triggerAtRaw);
+      if (!triggerAtUtc) continue;
       await addReminder({
         user_id: userId,
         message,

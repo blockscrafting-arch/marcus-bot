@@ -2,7 +2,7 @@ import bot from '@/lib/telegram/bot';
 import { addReminder, getDueReminders, markReminderSent } from '@/lib/db/reminders';
 import { listUsersWithPreference } from '@/lib/db/users';
 import { logger } from '@/lib/utils/logger';
-import { getNextFutureTriggerAt } from '@/lib/utils/time';
+import { formatUserTime, getNextFutureTriggerAt } from '@/lib/utils/time';
 
 const REMINDER_LATE_THRESHOLD_MS = 60 * 60 * 1000; // 1 час
 
@@ -37,6 +37,7 @@ export async function processReminders(): Promise<number> {
             reminderId: reminder.id,
             userId: reminder.user_id,
             trigger_at: reminder.trigger_at,
+            trigger_at_msk: formatUserTime(MSK_TIMEZONE, new Date(reminder.trigger_at)),
             delayMs,
             repeat_pattern: reminder.repeat_pattern,
           },
@@ -46,6 +47,17 @@ export async function processReminders(): Promise<number> {
         await bot.api.sendMessage(reminder.user_id, reminder.message);
         await markReminderSent(reminder.id);
         sentCount += 1;
+        logger.info(
+          {
+            reminderId: reminder.id,
+            userId: reminder.user_id,
+            trigger_at: reminder.trigger_at,
+            trigger_at_msk: formatUserTime(MSK_TIMEZONE, new Date(reminder.trigger_at)),
+            delayMs,
+            repeat_pattern: reminder.repeat_pattern,
+          },
+          'sent_reminder'
+        );
       }
       if (reminder.repeat_pattern) {
         const nextTriggerAt = getNextFutureTriggerAt(

@@ -179,6 +179,15 @@ export function parseIsoToLocalParts(iso: string): LocalDateParts | null {
 }
 
 /**
+ * Нормализует ISO-строку как MSK (+03) и возвращает UTC ISO для хранения в БД.
+ */
+export function normalizeIsoAsMsk(iso: string): string | null {
+  const parts = parseIsoToLocalParts(iso);
+  if (!parts) return null;
+  return toUtcIsoFromLocalParts(parts, 'Europe/Moscow');
+}
+
+/**
  * Возвращает следующий запуск для повторяющегося напоминания.
  */
 export function getNextTriggerAt(
