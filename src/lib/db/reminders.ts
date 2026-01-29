@@ -80,14 +80,17 @@ export async function listUpcomingReminders(userId: number, limit = 5): Promise<
 export async function findReminderByMessage(
   userId: number,
   message: string,
-  repeatPattern?: string
+  repeatPattern?: string,
+  includeSent = false
 ): Promise<ReminderRecord | null> {
   let query = supabase
     .from('marcus_reminders')
     .select('*')
     .eq('user_id', userId)
-    .eq('message', message)
-    .eq('sent', false);
+    .eq('message', message);
+  if (!includeSent) {
+    query = query.eq('sent', false);
+  }
   if (repeatPattern) {
     query = query.eq('repeat_pattern', repeatPattern);
   }
@@ -106,6 +109,19 @@ export async function updateReminderTriggerAt(id: string, triggerAt: string): Pr
   const { error } = await supabase.from('marcus_reminders').update({ trigger_at: triggerAt }).eq('id', id);
   if (error) {
     logger.error({ error, reminderId: id }, 'Ошибка при обновлении trigger_at');
+  }
+}
+
+/**
+ * Обновляет время и сбрасывает sent.
+ */
+export async function updateReminderTriggerAndResetSent(id: string, triggerAt: string): Promise<void> {
+  const { error } = await supabase
+    .from('marcus_reminders')
+    .update({ trigger_at: triggerAt, sent: false })
+    .eq('id', id);
+  if (error) {
+    logger.error({ error, reminderId: id }, 'Ошибка при обновлении trigger_at и sent');
   }
 }
 

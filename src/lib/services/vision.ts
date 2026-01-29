@@ -5,27 +5,31 @@ const VISION_MODEL = process.env.VISION_MODEL || 'google/gemini-2.0-flash-exp:fr
 const VISION_TIMEOUT_MS = 30_000;
 
 /**
- * Анализирует изображение через vision-модель и возвращает текстовое описание.
+ * Анализирует набор изображений через vision-модель и возвращает описание.
  */
-export async function analyzeImage(imageUrl: string, userPrompt?: string): Promise<string> {
+export async function analyzeImages(imageUrls: string[], userPrompt?: string): Promise<string> {
+  if (!imageUrls.length) {
+    return 'Не удалось описать изображение.';
+  }
   const prompt =
     userPrompt?.trim() ||
-    'Опиши изображение на русском: что на нём изображено, текст если есть, контекст. Кратко и по делу.';
+    'Опиши изображение(я) на русском: что на них изображено, текст если есть, контекст. Если изображений несколько, дай общий обзор и ключевые отличия. Кратко и по делу.';
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
 
   try {
+    const contentParts = [
+      { type: 'text', text: prompt },
+      ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
+    ];
     const response = await openRouter.chat.completions.create(
       {
         model: VISION_MODEL,
         messages: [
           {
             role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: imageUrl } },
-            ],
+            content: contentParts,
           },
         ],
         max_tokens: 1024,
@@ -51,4 +55,11 @@ export async function analyzeImage(imageUrl: string, userPrompt?: string): Promi
     }
     return 'Ошибка при анализе изображения. Попробуй позже.';
   }
+}
+
+/**
+ * Анализирует одиночное изображение через vision-модель.
+ */
+export async function analyzeImage(imageUrl: string, userPrompt?: string): Promise<string> {
+  return analyzeImages([imageUrl], userPrompt);
 }

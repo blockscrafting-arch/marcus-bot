@@ -1,5 +1,5 @@
 import bot from '@/lib/telegram/bot';
-import { addReminder, getDueReminders, markReminderSent } from '@/lib/db/reminders';
+import { getDueReminders, markReminderSent, updateReminderTriggerAndResetSent } from '@/lib/db/reminders';
 import { listUsersWithPreference } from '@/lib/db/users';
 import { logger } from '@/lib/utils/logger';
 import { formatUserTime, getNextFutureTriggerAt } from '@/lib/utils/time';
@@ -67,12 +67,7 @@ export async function processReminders(): Promise<number> {
           now
         );
         if (nextTriggerAt) {
-          await addReminder({
-            user_id: reminder.user_id,
-            message: reminder.message,
-            trigger_at: nextTriggerAt,
-            repeat_pattern: reminder.repeat_pattern,
-          });
+          await updateReminderTriggerAndResetSent(reminder.id, nextTriggerAt);
         }
       }
     } catch (error) {

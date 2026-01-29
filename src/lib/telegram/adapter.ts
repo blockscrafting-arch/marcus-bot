@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import bot from './bot';
 import { logger } from '@/lib/utils/logger';
+import { tryMarkUpdateProcessed } from '@/lib/db/updates';
 
 /**
  * Обрабатывает входящие webhook-обновления Telegram.
@@ -50,6 +51,22 @@ export async function handleWebhook(req: NextRequest): Promise<Response> {
       return new Response(JSON.stringify({ error: 'Invalid update format' }), { 
         status: 400,
         headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    const updateId = Number(body.update_id);
+    if (!Number.isFinite(updateId)) {
+      logger.error({ updateId: body.update_id }, 'Неверный update_id');
+      return new Response(JSON.stringify({ error: 'Invalid update_id' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const shouldProcess = await tryMarkUpdateProcessed(updateId);
+    if (!shouldProcess) {
+      logger.info({ updateId }, 'Дубликат update_id, пропускаю');
+      return new Response('OK', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
       });
     }
     

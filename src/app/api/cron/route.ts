@@ -1,11 +1,15 @@
 import { NextRequest } from 'next/server';
 import { processDailySummaries, processReminders } from '@/lib/services/scheduler';
 import { logger } from '@/lib/utils/logger';
+import { cleanupProcessedUpdates } from '@/lib/db/updates';
+import { cleanupMediaGroups } from '@/lib/db/media-groups';
 
 async function runCron(): Promise<Response> {
   try {
     const remindersSent = await processReminders();
     const summariesSent = await processDailySummaries();
+    await cleanupProcessedUpdates(7);
+    await cleanupMediaGroups(6);
     return new Response(JSON.stringify({ remindersSent, summariesSent }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
