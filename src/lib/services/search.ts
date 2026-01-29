@@ -21,9 +21,9 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        api_key: apiKey,
         query,
         max_results: 5,
         include_answer: false,
@@ -35,19 +35,23 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
       const bodyText = await response.text();
       logger.error(
         { status: response.status, body: bodyText.slice(0, 500), query: query.slice(0, 80) },
-        'Ошибка поиска Tavily'
+        'Tavily: ошибка поиска (status, body)'
       );
       return [];
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, unknown>;
     const results = (data.results || []) as SearchResult[];
     if (!results.length) {
-      logger.info({ query: query.slice(0, 80) }, 'Tavily: пустой результат');
+      const responseKeys = Object.keys(data).filter((k) => k !== 'results');
+      logger.info(
+        { query: query.slice(0, 80), responseKeys, hasAnswer: !!data.answer },
+        'Tavily: пустой результат (диагностика)'
+      );
     }
     return results;
   } catch (error) {
-    logger.error({ error, query: query.slice(0, 80) }, 'Ошибка при запросе к Tavily');
+    logger.error({ error, query: query.slice(0, 80) }, 'Tavily: ошибка при запросе');
     return [];
   }
 }

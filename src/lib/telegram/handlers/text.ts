@@ -13,7 +13,7 @@ import { addReminder } from '@/lib/db/reminders';
 import { ensureDailyCareReminder } from '@/lib/services/care';
 import { formatUserTime, normalizeIsoAsMsk } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
-import { needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
+import { needsCurrentTime, needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
 import { logger } from '@/lib/utils/logger';
 
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 25000);
@@ -135,27 +135,7 @@ function buildToolResponse(
     };
   }
 
-  const searchTool = toolResponses.find((item) => item.name === 'search_web');
-  if (searchTool) {
-    const result = searchTool.result;
-    if (result?.fallback === true && result?.content) {
-      const content = String(result.content).trim();
-      if (content) return { reply: content, skipModel: true };
-    }
-    const results = (result?.results || []) as Array<{ title?: string; content?: string; url?: string }>;
-    if (results.length > 0) {
-      const lines = results.slice(0, 3).map((r) => {
-        const title = r.title || 'Без названия';
-        const snippet = (r.content || '').slice(0, 200).trim();
-        return snippet ? `${title}\n${snippet}` : title;
-      });
-      return { reply: lines.join('\n\n'), skipModel: true };
-    }
-    return {
-      reply: 'Не удалось найти информацию по запросу. Попробуй переформулировать.',
-      skipModel: true,
-    };
-  }
+  // search_web и deep_research всегда проходят через второй вызов LLM (не skipModel).
 
   return null;
 }
@@ -555,11 +535,13 @@ export async function handleTextMessage(
       ? ({ type: 'function', function: { name: 'list_reminders' } } as const)
       : isReminderIntent(messageText)
         ? ({ type: 'function', function: { name: 'add_reminder' } } as const)
-        : needsDeepResearch(messageText)
-          ? ({ type: 'function', function: { name: 'deep_research' } } as const)
-          : needsSearch(messageText)
-            ? ({ type: 'function', function: { name: 'search_web' } } as const)
-            : 'auto';
+        : needsCurrentTime(messageText)
+          ? ({ type: 'function', function: { name: 'get_current_time' } } as const)
+          : needsDeepResearch(messageText)
+            ? ({ type: 'function', function: { name: 'deep_research' } } as const)
+            : needsSearch(messageText)
+              ? ({ type: 'function', function: { name: 'search_web' } } as const)
+              : 'auto';
 
     const response = await withTimeout(
       openRouter.chat.completions.create({

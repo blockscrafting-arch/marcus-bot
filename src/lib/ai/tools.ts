@@ -7,7 +7,7 @@ import { addReminder, listUpcomingReminders } from '@/lib/db/reminders';
 import { createEmbedding } from '@/lib/ai/memory/embeddings';
 import { retrieveMemories } from '@/lib/ai/memory/retrieval';
 import { logger } from '@/lib/utils/logger';
-import { normalizeIsoAsMsk } from '@/lib/utils/time';
+import { normalizeIsoAsMsk, formatUserTime, formatUserIso } from '@/lib/utils/time';
 
 export type ToolContext = {
   userId: number;
@@ -43,6 +43,18 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           query: { type: 'string', description: 'Вопрос для глубокого исследования' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_current_time',
+      description:
+        'Получить текущее время (MSK). Используй для вопросов о времени, таймзоне, "который час", "по какому времени работаешь". Не вызывай search_web/deep_research для таких вопросов.',
+      parameters: {
+        type: 'object',
+        properties: {},
       },
     },
   },
@@ -188,6 +200,14 @@ export async function executeToolCall(
       const query = String(args.query || '');
       const { content, citations } = await deepResearch(query);
       return JSON.stringify({ content, citations: citations ?? [] });
+    }
+
+    if (name === 'get_current_time') {
+      const tz = 'Europe/Moscow';
+      const now = new Date();
+      const time = formatUserTime(tz, now);
+      const iso = formatUserIso(tz, now);
+      return JSON.stringify({ time, time_zone: tz, iso });
     }
 
     if (name === 'add_memory') {
