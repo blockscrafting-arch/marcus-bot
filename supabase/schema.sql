@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS marcus_memories (
   embedding vector(1536),
   memory_type TEXT,
   importance FLOAT DEFAULT 0.5,
+  is_active BOOLEAN DEFAULT TRUE,
+  expires_at TIMESTAMP WITH TIME ZONE NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -69,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_marcus_tasks_user_id ON marcus_tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_marcus_reminders_user_id ON marcus_reminders(user_id);
 CREATE INDEX IF NOT EXISTS idx_marcus_reminders_trigger_at ON marcus_reminders(trigger_at);
 
--- Поиск в памяти
+-- Поиск в памяти (только активные, не истёкшие)
 CREATE OR REPLACE FUNCTION match_marcus_memories(
   p_user_id BIGINT,
   p_embedding vector(1536),
@@ -85,6 +87,8 @@ BEGIN
   FROM marcus_memories m
   WHERE m.user_id = p_user_id
     AND m.embedding IS NOT NULL
+    AND (m.is_active IS NULL OR m.is_active = TRUE)
+    AND (m.expires_at IS NULL OR m.expires_at > NOW())
     AND 1 - (m.embedding <=> p_embedding) >= p_similarity_threshold
   ORDER BY m.embedding <=> p_embedding
   LIMIT p_match_count;

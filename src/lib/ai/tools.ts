@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { searchWeb } from '@/lib/services/search';
 import { deepResearch } from '@/lib/services/research';
-import { saveMemory } from '@/lib/db/memories';
+import { saveMemory, matchMemories } from '@/lib/db/memories';
 import { addTask, listTasks } from '@/lib/db/tasks';
 import { addReminder, listUpcomingReminders } from '@/lib/db/reminders';
 import { createEmbedding } from '@/lib/ai/memory/embeddings';
@@ -190,8 +190,17 @@ export async function executeToolCall(
     }
 
     if (name === 'add_memory') {
-      const content = String(args.content || '');
+      const content = String(args.content || '').trim();
+      if (!content) return JSON.stringify({ ok: false, error: 'content пустой' });
       const embedding = await createEmbedding(content);
+      if (!embedding.length) return JSON.stringify({ ok: false, error: 'Не удалось создать embedding' });
+      const existing = await matchMemories({
+        userId: context.userId,
+        embedding,
+        matchCount: 1,
+        similarityThreshold: 0.98,
+      });
+      if (existing.length > 0) return JSON.stringify({ ok: true, skipped: 'уже есть похожая память' });
       await saveMemory({
         user_id: context.userId,
         content,

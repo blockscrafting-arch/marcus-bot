@@ -4,8 +4,12 @@ import { openRouter, defaultChatModel } from '@/lib/ai/client';
 import { getSystemPrompt } from '@/lib/ai/prompt';
 import { tools, executeToolCall } from '@/lib/ai/tools';
 import { retrieveMemories } from '@/lib/ai/memory/retrieval';
+import { createEmbedding } from '@/lib/ai/memory/embeddings';
 import { upsertUser, getUser } from '@/lib/db/users';
 import { getRecentMessages, saveMessage } from '@/lib/db/messages';
+import { saveMemory, deactivateMemoryByContent, matchMemories } from '@/lib/db/memories';
+import { addTask } from '@/lib/db/tasks';
+import { addReminder } from '@/lib/db/reminders';
 import { ensureDailyCareReminder } from '@/lib/services/care';
 import { formatUserTime } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
@@ -13,6 +17,24 @@ import { needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
 import { logger } from '@/lib/utils/logger';
 
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 25000);
+const EXTRACTION_TIMEOUT_MS = 15000;
+/** Лимит символов контекста для extraction (сообщение + ответ), чтобы не упереться в лимит токенов. */
+const EXTRACTION_MESSAGE_MAX = 3000;
+const EXTRACTION_REPLY_MAX = 2000;
+/** Порог similarity для «дубликат памяти» — не сохраняем, если уже есть очень похожая. */
+const MEMORY_DUPLICATE_THRESHOLD = 0.98;
+/** Порог similarity для деактивации по сходству (найти запись и деактивировать). */
+const MEMORY_DEACTIVATE_THRESHOLD = 0.9;
+
+const EXTRACTION_SYSTEM_PROMPT = `Ты извлекаешь из диалога данные для сохранения. Ответь ТОЛЬКО валидным JSON без markdown, без комментариев.
+Формат:
+{
+  "memories_to_add": [{"content": "строка", "memory_type": "event"|"temporary", "importance": 0.5, "expires_at": null}],
+  "memories_to_deactivate": ["точный текст памяти для деактивации"],
+  "tasks_to_add": [{"title": "строка", "description": null, "due_date": null, "priority": "medium"}],
+  "reminders_to_add": [{"message": "строка", "trigger_at": "ISO8601 с таймзоной", "repeat_pattern": null}]
+}
+Правила: memory_type temporary — для симптомов/болезни; при "выздоровел" добавь content в memories_to_deactivate. trigger_at и due_date только в ISO 8601 (например 2026-01-29T10:00:00+03:00), иначе null. Пустые массивы — [].`;
 
 /**
  * Определяет, похоже ли сообщение на запрос напоминания.
@@ -186,14 +208,60 @@ const LONG_MESSAGE_MAX_LENGTH = 32_000;
 const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
 
 /**
- * Разбивает длинный текст на части и отправляет каждую отдельным сообщением.
+ * Экранирует символы для Telegram HTML parse_mode.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Конвертирует **bold** в <b>bold</b> с экранированием остального текста.
+ */
+function formatInline(text: string): string {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+}
+
+/**
+ * Преобразует Markdown-подобный текст в Telegram HTML:
+ * - заголовки ^#{1,6} ... → <b>...</b>
+ * - маркеры списка - или * в начале строки → •
+ * - **bold** → <b>bold</b>
+ */
+function formatForTelegram(text: string): string {
+  if (!text?.trim()) return text;
+  const lines = text.split('\n');
+  const out: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      out.push('<b>' + formatInline(headingMatch[1].trim()) + '</b>');
+      continue;
+    }
+    const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bulletMatch) {
+      out.push('• ' + formatInline(bulletMatch[1].trim()));
+      continue;
+    }
+    out.push(formatInline(trimmed || line));
+  }
+  return out.join('\n');
+}
+
+/**
+ * Разбивает длинный текст на части и отправляет каждую отдельным сообщением (HTML).
  * Режет по границе абзаца (\n\n) или строки (\n), если возможно.
  */
 async function sendLongMessage(ctx: Context, text: string): Promise<void> {
   const max = TELEGRAM_MESSAGE_MAX_LENGTH;
   if (!text?.trim()) return;
-  if (text.length <= max) {
-    await ctx.reply(text);
+  const formatted = formatForTelegram(text);
+  if (formatted.length <= max) {
+    await ctx.reply(formatted, { parse_mode: 'HTML' });
     return;
   }
   const chunks: string[] = [];
@@ -210,7 +278,7 @@ async function sendLongMessage(ctx: Context, text: string): Promise<void> {
     rest = rest.slice(splitAt).trim();
   }
   for (const chunk of chunks) {
-    if (chunk) await ctx.reply(chunk);
+    if (chunk) await ctx.reply(formatForTelegram(chunk), { parse_mode: 'HTML' });
   }
 }
 
@@ -218,6 +286,187 @@ export type HandleTextMessageOptions = {
   /** Разрешить длинное сообщение (из документа/фото), не резать по 2000. */
   allowLongMessage?: boolean;
 };
+
+type StatusRef = { chatId: number; messageId: number };
+
+async function sendStatus(ctx: Context, text: string): Promise<StatusRef | null> {
+  try {
+    const msg = await ctx.reply(text);
+    if (msg?.chat?.id != null && msg.message_id != null) {
+      return { chatId: msg.chat.id, messageId: msg.message_id };
+    }
+  } catch {
+    // игнорируем ошибку отправки статуса
+  }
+  return null;
+}
+
+async function updateStatus(ctx: Context, status: StatusRef | null, text: string): Promise<void> {
+  if (!status) return;
+  try {
+    await ctx.api.editMessageText(status.chatId, status.messageId, text);
+  } catch {
+    // игнорируем ошибку редактирования статуса
+  }
+}
+
+async function finalizeStatus(ctx: Context, status: StatusRef | null): Promise<void> {
+  if (!status) return;
+  try {
+    await ctx.api.editMessageText(status.chatId, status.messageId, 'Готово');
+  } catch {
+    // игнорируем
+  }
+}
+
+/** Признаки «важного» контекста для extraction (здоровье, планы, задачи, память). */
+function needsImportantContext(messageText: string, replyLength: number): boolean {
+  const normalized = messageText.toLowerCase();
+  const health =
+    /здоровь|самочувств|симптом|боле|выздоровел|хроническ|рефлюкс|горло|живот|голова/i.test(normalized);
+  const plans = /план|задач|напомин|запомни|сделать|сделаю|надо/i.test(normalized);
+  return health || plans || replyLength > 500;
+}
+
+type ExtractionPayload = {
+  memories_to_add?: Array<{
+    content: string;
+    memory_type?: string;
+    importance?: number;
+    expires_at?: string | null;
+  }>;
+  memories_to_deactivate?: string[];
+  tasks_to_add?: Array<{
+    title: string;
+    description?: string | null;
+    due_date?: string | null;
+    priority?: string;
+  }>;
+  reminders_to_add?: Array<{
+    message: string;
+    trigger_at: string;
+    repeat_pattern?: string | null;
+  }>;
+};
+
+function isValidIsoDateTime(value: string): boolean {
+  if (!value || typeof value !== 'string') return false;
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime());
+}
+
+/**
+ * По результатам диалога при необходимости вызывает extraction и сохраняет память/задачи/напоминания.
+ */
+async function maybePersistArtifacts(
+  userId: number,
+  timeZone: string,
+  messageText: string,
+  botReply: string
+): Promise<void> {
+  if (!needsImportantContext(messageText, botReply.length)) return;
+
+  const truncatedMessage =
+    messageText.length > EXTRACTION_MESSAGE_MAX
+      ? messageText.slice(0, EXTRACTION_MESSAGE_MAX) + '…'
+      : messageText;
+  const truncatedReply =
+    botReply.length > EXTRACTION_REPLY_MAX ? botReply.slice(0, EXTRACTION_REPLY_MAX) + '…' : botReply;
+
+  try {
+    const response = await withTimeout(
+      openRouter.chat.completions.create({
+        model: defaultChatModel,
+        messages: [
+          { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Таймзона пользователя: ${timeZone}. Сообщение пользователя:\n${truncatedMessage}\n\nОтвет ассистента:\n${truncatedReply}`,
+          },
+        ],
+        max_tokens: 2048,
+        temperature: 0.1,
+      }),
+      EXTRACTION_TIMEOUT_MS
+    );
+    const raw = response.choices[0]?.message?.content?.trim() || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const payload: ExtractionPayload = jsonMatch ? safeJsonParse(jsonMatch[0]) : {};
+
+    const memoriesToAdd = payload.memories_to_add || [];
+    for (const m of memoriesToAdd) {
+      const content = String(m.content || '').trim();
+      if (!content) continue;
+      const embedding = await createEmbedding(content);
+      if (!embedding.length) continue;
+      const existing = await matchMemories({
+        userId,
+        embedding,
+        matchCount: 1,
+        similarityThreshold: MEMORY_DUPLICATE_THRESHOLD,
+      });
+      if (existing.length > 0) continue;
+      await saveMemory({
+        user_id: userId,
+        content,
+        memory_type: m.memory_type || 'event',
+        importance: m.importance ?? 0.5,
+        expires_at: m.expires_at ?? null,
+        embedding,
+      });
+    }
+
+    const toDeactivate = payload.memories_to_deactivate || [];
+    for (const content of toDeactivate) {
+      const s = String(content || '').trim();
+      if (!s) continue;
+      const embedding = await createEmbedding(s);
+      if (!embedding.length) {
+        await deactivateMemoryByContent(userId, s);
+        continue;
+      }
+      const similar = await matchMemories({
+        userId,
+        embedding,
+        matchCount: 3,
+        similarityThreshold: MEMORY_DEACTIVATE_THRESHOLD,
+      });
+      for (const match of similar) {
+        await deactivateMemoryByContent(userId, match.content);
+      }
+      if (similar.length === 0) await deactivateMemoryByContent(userId, s);
+    }
+
+    const tasksToAdd = payload.tasks_to_add || [];
+    for (const t of tasksToAdd) {
+      const title = String(t.title || '').trim();
+      if (!title) continue;
+      await addTask({
+        user_id: userId,
+        title,
+        description: t.description ?? null,
+        due_date: isValidIsoDateTime(String(t.due_date || '')) ? t.due_date! : null,
+        priority: (t.priority as 'low' | 'medium' | 'high') || 'medium',
+      });
+    }
+
+    const remindersToAdd = payload.reminders_to_add || [];
+    for (const r of remindersToAdd) {
+      const message = String(r.message || '').trim();
+      const triggerAt = String(r.trigger_at || '').trim();
+      if (!message || !isValidIsoDateTime(triggerAt)) continue;
+      await addReminder({
+        user_id: userId,
+        message,
+        trigger_at: triggerAt,
+        repeat_pattern: r.repeat_pattern ?? null,
+      });
+    }
+  } catch (err) {
+    logger.error({ err, userId }, 'Ошибка extraction/persist артефактов');
+  }
+}
 
 /**
  * Обработка текстового сообщения пользователя.
@@ -253,7 +502,10 @@ export async function handleTextMessage(
     return;
   }
 
+  let status: StatusRef | null = null;
   try {
+    status = await sendStatus(ctx, 'Принял запрос. Думаю...');
+
     await upsertUser({
       telegram_id: telegramId,
       username: user.username || null,
@@ -323,6 +575,9 @@ export async function handleTextMessage(
 
     let assistantMessage = response.choices[0]?.message;
     if (assistantMessage?.tool_calls?.length) {
+      const toolNames = assistantMessage.tool_calls.map((t) => t.function.name).join(', ');
+      await updateStatus(ctx, status, `Выполняю инструменты: ${toolNames}...`);
+
       const toolResponses: ToolResponse[] = [];
       logger.info(
         { userId: telegramId, toolCalls: assistantMessage.tool_calls.map((t) => t.function.name) },
@@ -345,15 +600,20 @@ export async function handleTextMessage(
       const directResponse = buildToolResponse(toolResponses, timeZone);
       if (directResponse?.skipModel) {
         try {
+          await updateStatus(ctx, status, 'Отправляю ответ...');
           await sendLongMessage(ctx, directResponse.reply);
           logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
         } catch (replyError) {
           logger.error({ replyError, userId: telegramId }, 'Не удалось отправить ответ пользователю');
         }
         await saveMessage({ user_id: telegramId, role: 'assistant', content: directResponse.reply });
+        await updateStatus(ctx, status, 'Записываю в память/задачи/напоминания...');
+        await maybePersistArtifacts(telegramId, timeZone, messageText, directResponse.reply);
+        await finalizeStatus(ctx, status);
         return;
       }
 
+      await updateStatus(ctx, status, 'Формирую итоговый ответ...');
       const secondResponse = await withTimeout(
         openRouter.chat.completions.create({
           model: defaultChatModel,
@@ -373,17 +633,22 @@ export async function handleTextMessage(
     const botReply = sanitizeReply(rawReply);
 
     try {
+      await updateStatus(ctx, status, 'Отправляю ответ...');
       await sendLongMessage(ctx, botReply);
       logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
     } catch (replyError) {
       logger.error({ replyError, userId: telegramId }, 'Не удалось отправить ответ пользователю');
     }
     await saveMessage({ user_id: telegramId, role: 'assistant', content: botReply });
+    await updateStatus(ctx, status, 'Записываю в память/задачи/напоминания...');
+    await maybePersistArtifacts(telegramId, timeZone, messageText, botReply);
+    await finalizeStatus(ctx, status);
   } catch (error) {
     logger.error(
       { err: error, userId: telegramId, model: defaultChatModel, timeoutMs: OPENROUTER_TIMEOUT_MS },
       'Ошибка при обработке сообщения'
     );
+    await updateStatus(ctx, status, 'Ошибка при обработке запроса');
     let errorMessage = 'Произошла ошибка при обработке вашего сообщения. Попробуйте позже.';
     if (error instanceof Error && error.message.includes('Timeout')) {
       errorMessage = 'Запрос занял слишком много времени. Попробуйте позже.';

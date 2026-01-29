@@ -7,6 +7,7 @@ export type MemoryRecord = {
   memory_type?: string;
   importance?: number;
   embedding?: number[];
+  expires_at?: string | null;
 };
 
 /**
@@ -19,9 +20,24 @@ export async function saveMemory(record: MemoryRecord): Promise<void> {
     memory_type: record.memory_type || 'event',
     importance: record.importance ?? 0.5,
     embedding: record.embedding,
+    expires_at: record.expires_at ?? null,
   });
   if (error) {
     logger.error({ error, userId: record.user_id }, 'Ошибка при сохранении памяти');
+  }
+}
+
+/**
+ * Деактивирует память по точному совпадению content для пользователя.
+ */
+export async function deactivateMemoryByContent(userId: number, content: string): Promise<void> {
+  const { error } = await supabase
+    .from('marcus_memories')
+    .update({ is_active: false })
+    .eq('user_id', userId)
+    .eq('content', content);
+  if (error) {
+    logger.error({ error, userId }, 'Ошибка при деактивации памяти');
   }
 }
 
