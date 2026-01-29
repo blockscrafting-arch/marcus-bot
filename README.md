@@ -67,9 +67,7 @@ curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https:
 curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
 ```
 
-## Время (MSK)
-
-- Все вводимые/выводимые времена интерпретируются как MSK (UTC+3).
+## Время (MSK)- Все вводимые/выводимые времена интерпретируются как MSK (UTC+3).
 - В базе данные хранятся в UTC (TIMESTAMPTZ), но для просмотра в MSK используйте:
 
 ```sql

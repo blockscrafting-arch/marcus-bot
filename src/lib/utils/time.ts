@@ -212,9 +212,7 @@ export function getNextTriggerAt(
   return toUtcIsoFromLocalParts(nextParts, timeZone);
 }
 
-const MAX_NEXT_TRIGGER_ITERATIONS = 60;
-
-/**
+const MAX_NEXT_TRIGGER_ITERATIONS = 60;/**
  * Возвращает следующий будущий trigger_at для повторяющегося напоминания (без хвоста в прошлом).
  * Пока next <= now, шагает вперёд по паттерну.
  */

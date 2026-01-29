@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { searchWeb } from '@/lib/services/search';
+import { searchWeb, braveSearch } from '@/lib/services/search';
 import { deepResearch, quickSearch } from '@/lib/services/research';
 import { saveMemory, matchMemories } from '@/lib/db/memories';
 import { addTask, listTasks } from '@/lib/db/tasks';
@@ -198,13 +198,20 @@ export async function executeToolCall(
   try {
     if (name === 'search_web') {
       const query = String(args.query || '');
-      const results = await searchWeb(query);
+      let results = await searchWeb(query);
       if (results.length > 0) {
         return JSON.stringify({ results });
       }
-      const perplexityKey = process.env.PERPLEXITY_API_KEY;
-      if (perplexityKey) {
-        logger.info({ query: query.slice(0, 80) }, 'search_web пустой — fallback на Perplexity (sonar)');
+      logger.info({ query: query.slice(0, 80) }, 'search_web: Tavily пустой/ошибка');
+      if (process.env.BRAVE_API_KEY) {
+        results = await braveSearch(query);
+        if (results.length > 0) {
+          logger.info({ query: query.slice(0, 80) }, 'fallback на Brave');
+          return JSON.stringify({ results });
+        }
+      }
+      if (process.env.PERPLEXITY_API_KEY) {
+        logger.info({ query: query.slice(0, 80) }, 'fallback на Perplexity (sonar)');
         const { content, citations } = await quickSearch(query);
         return JSON.stringify({ fallback: true, content, citations: citations ?? [] });
       }
