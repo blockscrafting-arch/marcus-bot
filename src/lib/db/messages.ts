@@ -14,6 +14,11 @@ export async function saveMessage(record: MessageRecord): Promise<void> {
   const { error } = await supabase.from('marcus_messages').insert(record);
   if (error) {
     logger.error({ error, userId: record.user_id, role: record.role }, 'Ошибка при сохранении сообщения');
+  } else {
+    logger.info(
+      { userId: record.user_id, role: record.role, contentLength: record.content?.length ?? 0 },
+      'Сообщение сохранено'
+    );
   }
 }
 

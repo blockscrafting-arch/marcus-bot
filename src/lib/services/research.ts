@@ -29,7 +29,14 @@ export async function deepResearch(query: string): Promise<{ content: string; ci
       },
       body: JSON.stringify({
         model: DEEP_RESEARCH_MODEL,
-        messages: [{ role: 'user', content: query }] as PerplexityMessage[],
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Ты исследователь. Отвечай ТОЛЬКО на русском языке. Будь кратким: выделяй главное, избегай воды и повторов. Структурируй ответ (списки, подзаголовки), без длинных абзацев. Итог — 1–3 предложения в конце.',
+          },
+          { role: 'user', content: query },
+        ] as PerplexityMessage[],
         max_tokens: 4096,
         temperature: 0.2,
       }),

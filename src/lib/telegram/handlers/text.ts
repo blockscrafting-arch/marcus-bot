@@ -113,30 +113,12 @@ function buildToolResponse(
     };
   }
 
-  const researchTool = toolResponses.find((item) => item.name === 'deep_research');
-  if (researchTool?.result?.content) {
-    const content = String(researchTool.result.content).trim();
-    if (content) {
-      const reply =
-        content.length <= TELEGRAM_MESSAGE_MAX_LENGTH
-          ? content
-          : content.slice(0, TELEGRAM_MESSAGE_MAX_LENGTH - 50) + '\n\n… (текст обрезан)';
-      return { reply, skipModel: true };
-    }
-  }
-
   const searchTool = toolResponses.find((item) => item.name === 'search_web');
   if (searchTool) {
     const result = searchTool.result;
     if (result?.fallback === true && result?.content) {
       const content = String(result.content).trim();
-      if (content) {
-        const reply =
-          content.length <= TELEGRAM_MESSAGE_MAX_LENGTH
-            ? content
-            : content.slice(0, TELEGRAM_MESSAGE_MAX_LENGTH - 50) + '\n\n… (текст обрезан)';
-        return { reply, skipModel: true };
-      }
+      if (content) return { reply: content, skipModel: true };
     }
     const results = (result?.results || []) as Array<{ title?: string; content?: string; url?: string }>;
     if (results.length > 0) {
@@ -145,11 +127,7 @@ function buildToolResponse(
         const snippet = (r.content || '').slice(0, 200).trim();
         return snippet ? `${title}\n${snippet}` : title;
       });
-      const reply = lines.join('\n\n');
-      return {
-        reply: reply.length <= TELEGRAM_MESSAGE_MAX_LENGTH ? reply : reply.slice(0, TELEGRAM_MESSAGE_MAX_LENGTH - 30) + '\n\n…',
-        skipModel: true,
-      };
+      return { reply: lines.join('\n\n'), skipModel: true };
     }
     return {
       reply: 'Не удалось найти информацию по запросу. Попробуй переформулировать.',
@@ -206,6 +184,35 @@ const USER_MESSAGE_MAX_LENGTH = 2000;
 const LONG_MESSAGE_MAX_LENGTH = 32_000;
 /** Максимальная длина одного ответа в Telegram. */
 const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
+
+/**
+ * Разбивает длинный текст на части и отправляет каждую отдельным сообщением.
+ * Режет по границе абзаца (\n\n) или строки (\n), если возможно.
+ */
+async function sendLongMessage(ctx: Context, text: string): Promise<void> {
+  const max = TELEGRAM_MESSAGE_MAX_LENGTH;
+  if (!text?.trim()) return;
+  if (text.length <= max) {
+    await ctx.reply(text);
+    return;
+  }
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > 0) {
+    if (rest.length <= max) {
+      chunks.push(rest);
+      break;
+    }
+    const slice = rest.slice(0, max);
+    const lastBreak = Math.max(slice.lastIndexOf('\n\n'), slice.lastIndexOf('\n'));
+    const splitAt = lastBreak > max * 0.5 ? lastBreak + 1 : max;
+    chunks.push(rest.slice(0, splitAt).trim());
+    rest = rest.slice(splitAt).trim();
+  }
+  for (const chunk of chunks) {
+    if (chunk) await ctx.reply(chunk);
+  }
+}
 
 export type HandleTextMessageOptions = {
   /** Разрешить длинное сообщение (из документа/фото), не резать по 2000. */
@@ -338,7 +345,7 @@ export async function handleTextMessage(
       const directResponse = buildToolResponse(toolResponses, timeZone);
       if (directResponse?.skipModel) {
         try {
-          await ctx.reply(directResponse.reply);
+          await sendLongMessage(ctx, directResponse.reply);
           logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
         } catch (replyError) {
           logger.error({ replyError, userId: telegramId }, 'Не удалось отправить ответ пользователю');
@@ -366,7 +373,7 @@ export async function handleTextMessage(
     const botReply = sanitizeReply(rawReply);
 
     try {
-      await ctx.reply(botReply);
+      await sendLongMessage(ctx, botReply);
       logger.info({ userId: telegramId }, 'Ответ пользователю отправлен');
     } catch (replyError) {
       logger.error({ replyError, userId: telegramId }, 'Не удалось отправить ответ пользователю');
