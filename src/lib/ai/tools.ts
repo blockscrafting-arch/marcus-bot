@@ -7,6 +7,7 @@ import { addReminder, listUpcomingReminders } from '@/lib/db/reminders';
 import { createEmbedding } from '@/lib/ai/memory/embeddings';
 import { retrieveMemories } from '@/lib/ai/memory/retrieval';
 import { logger } from '@/lib/utils/logger';
+import { parseIsoToLocalParts, toUtcIsoFromLocalParts } from '@/lib/utils/time';
 
 export type ToolContext = {
   userId: number;
@@ -233,7 +234,7 @@ export async function executeToolCall(
     }
 
     if (name === 'add_reminder' || name === 'schedule_followup') {
-      const triggerAt = String(args.trigger_at || '');
+      const triggerAtRaw = String(args.trigger_at || '');
       const messageText = String(args.message || '');
       const inferredRepeat = inferRepeatPatternFromMessage(messageText);
       const repeatPattern = String(args.repeat_pattern || '') || inferredRepeat;
@@ -243,16 +244,18 @@ export async function executeToolCall(
           message: 'Для будней/выходных укажи конкретные дни или частоту.',
         });
       }
-      if (!isValidIsoDateTime(triggerAt)) {
+      const parts = parseIsoToLocalParts(triggerAtRaw);
+      if (!parts) {
         return JSON.stringify({
           error: 'INVALID_TRIGGER_AT',
-          message: 'trigger_at должен быть ISO 8601 с таймзоной',
+          message: 'trigger_at должен быть ISO 8601 (например 2026-01-29T18:00:00+03:00), время в MSK',
         });
       }
+      const triggerAtUtc = toUtcIsoFromLocalParts(parts, 'Europe/Moscow');
       const result = await addReminder({
         user_id: context.userId,
         message: messageText,
-        trigger_at: triggerAt,
+        trigger_at: triggerAtUtc,
         repeat_pattern: repeatPattern || null,
       });
       if (!result.ok) {
@@ -271,15 +274,6 @@ export async function executeToolCall(
     logger.error({ error, tool: name }, 'Ошибка при выполнении tool call');
     return JSON.stringify({ error: 'Tool execution failed' });
   }
-}
-
-/**
- * Проверяет ISO 8601 дату/время с таймзоной.
- */
-function isValidIsoDateTime(value: string): boolean {
-  if (!value || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime());
 }
 
 /**

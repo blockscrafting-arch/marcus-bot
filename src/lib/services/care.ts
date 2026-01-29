@@ -6,15 +6,17 @@ import { logger } from '@/lib/utils/logger';
 const CARE_MESSAGE = 'Как ты себя чувствуешь? Как прошел день и сколько энергии по шкале 1-10?';
 const CARE_WINDOW_START = 19;
 const CARE_WINDOW_END = 22;
+const MSK_TIMEZONE = 'Europe/Moscow';
 
 /**
- * Создает ежедневное напоминание заботы, если его еще нет.
+ * Создает ежедневное напоминание заботы, если его еще нет. Время всегда в MSK.
  */
 export async function ensureDailyCareReminder(userId: number, timeZone: string | undefined): Promise<void> {
   const existing = await findReminderByMessage(userId, CARE_MESSAGE, 'daily');
   const lastMessageAt = await getLastUserMessageTime(userId);
-  const { hour, minute } = inferCareTime(lastMessageAt, timeZone);
-  const triggerAt = getNextLocalTimeIso(timeZone, hour, minute);
+  const tz = MSK_TIMEZONE;
+  const { hour, minute } = inferCareTime(lastMessageAt, tz);
+  const triggerAt = getNextLocalTimeIso(tz, hour, minute);
 
   if (existing?.id) {
     const existingTime = new Date(existing.trigger_at).getTime();

@@ -11,7 +11,7 @@ import { saveMemory, deactivateMemoryByContent, matchMemories } from '@/lib/db/m
 import { addTask } from '@/lib/db/tasks';
 import { addReminder } from '@/lib/db/reminders';
 import { ensureDailyCareReminder } from '@/lib/services/care';
-import { formatUserTime } from '@/lib/utils/time';
+import { formatUserTime, parseIsoToLocalParts, toUtcIsoFromLocalParts } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
 import { needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
 import { logger } from '@/lib/utils/logger';
@@ -34,7 +34,7 @@ const EXTRACTION_SYSTEM_PROMPT = `Ты извлекаешь из диалога 
   "tasks_to_add": [{"title": "строка", "description": null, "due_date": null, "priority": "medium"}],
   "reminders_to_add": [{"message": "строка", "trigger_at": "ISO8601 с таймзоной", "repeat_pattern": null}]
 }
-Правила: memory_type temporary — для симптомов/болезни; при "выздоровел" добавь content в memories_to_deactivate. trigger_at и due_date только в ISO 8601 (например 2026-01-29T10:00:00+03:00), иначе null. Пустые массивы — [].`;
+Правила: memory_type temporary — для симптомов/болезни; при "выздоровел" добавь content в memories_to_deactivate. Все времена только MSK (+03:00). trigger_at и due_date — ISO 8601 (например 2026-01-29T18:00:00+03:00), иначе null. Пустые массивы — [].`;
 
 /**
  * Определяет, похоже ли сообщение на запрос напоминания.
@@ -454,12 +454,15 @@ async function maybePersistArtifacts(
     const remindersToAdd = payload.reminders_to_add || [];
     for (const r of remindersToAdd) {
       const message = String(r.message || '').trim();
-      const triggerAt = String(r.trigger_at || '').trim();
-      if (!message || !isValidIsoDateTime(triggerAt)) continue;
+      const triggerAtRaw = String(r.trigger_at || '').trim();
+      if (!message) continue;
+      const parts = parseIsoToLocalParts(triggerAtRaw);
+      if (!parts) continue;
+      const triggerAtUtc = toUtcIsoFromLocalParts(parts, 'Europe/Moscow');
       await addReminder({
         user_id: userId,
         message,
-        trigger_at: triggerAt,
+        trigger_at: triggerAtUtc,
         repeat_pattern: r.repeat_pattern ?? null,
       });
     }

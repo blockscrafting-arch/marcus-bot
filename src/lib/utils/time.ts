@@ -162,6 +162,23 @@ export function getNextLocalTimeIso(
 }
 
 /**
+ * Разбирает ISO-строку даты/времени и возвращает части как числа (игнорируя таймзону).
+ * Используется для интерпретации времени как MSK и конвертации в UTC через toUtcIsoFromLocalParts.
+ */
+export function parseIsoToLocalParts(iso: string): LocalDateParts | null {
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+  const hour = parseInt(match[4], 10);
+  const minute = parseInt(match[5], 10);
+  const second = parseInt(match[6] ?? '0', 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return null;
+  return { year, month, day, hour, minute, second };
+}
+
+/**
  * Возвращает следующий запуск для повторяющегося напоминания.
  */
 export function getNextTriggerAt(
@@ -184,5 +201,28 @@ export function getNextTriggerAt(
   }
   if (!nextParts) return null;
   return toUtcIsoFromLocalParts(nextParts, timeZone);
+}
+
+const MAX_NEXT_TRIGGER_ITERATIONS = 60;
+
+/**
+ * Возвращает следующий будущий trigger_at для повторяющегося напоминания (без хвоста в прошлом).
+ * Пока next <= now, шагает вперёд по паттерну.
+ */
+export function getNextFutureTriggerAt(
+  triggerAtIso: string,
+  repeatPattern: string,
+  timeZone: string | undefined,
+  now: Date = new Date()
+): string | null {
+  let current = triggerAtIso;
+  const nowIso = now.toISOString();
+  for (let i = 0; i < MAX_NEXT_TRIGGER_ITERATIONS; i++) {
+    const next = getNextTriggerAt(current, repeatPattern, timeZone);
+    if (!next) return null;
+    if (next > nowIso) return next;
+    current = next;
+  }
+  return null;
 }
 

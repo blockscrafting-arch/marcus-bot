@@ -1,16 +1,22 @@
 import bot from '@/lib/telegram/bot';
 import { addReminder, getDueReminders, markReminderSent } from '@/lib/db/reminders';
-import { getUser, listUsersWithPreference } from '@/lib/db/users';
+import { listUsersWithPreference } from '@/lib/db/users';
 import { logger } from '@/lib/utils/logger';
-import { getNextTriggerAt } from '@/lib/utils/time';
+import { getNextFutureTriggerAt } from '@/lib/utils/time';
+
+const REMINDER_LATE_THRESHOLD_MS = 60 * 60 * 1000; // 1 час
+
+const MSK_TIMEZONE = 'Europe/Moscow';
 
 /**
- * Отправляет просроченные напоминания.
+ * Отправляет просроченные напоминания. Просроченные более чем на 1 час помечаются как пропущенные без отправки.
  */
 export async function processReminders(): Promise<number> {
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
   const reminders = await getDueReminders(nowIso);
   let sentCount = 0;
+  let skippedCount = 0;
   try {
     await bot.init();
   } catch (error) {
@@ -19,14 +25,35 @@ export async function processReminders(): Promise<number> {
   }
   for (const reminder of reminders) {
     if (!reminder.id) continue;
+    const triggerAtMs = new Date(reminder.trigger_at).getTime();
+    const delayMs = now.getTime() - triggerAtMs;
+    const isLate = delayMs > REMINDER_LATE_THRESHOLD_MS;
     try {
-      await bot.api.sendMessage(reminder.user_id, `Напоминание: ${reminder.message}`);
-      await markReminderSent(reminder.id);
-      sentCount += 1;
+      if (isLate) {
+        await markReminderSent(reminder.id);
+        skippedCount += 1;
+        logger.info(
+          {
+            reminderId: reminder.id,
+            userId: reminder.user_id,
+            trigger_at: reminder.trigger_at,
+            delayMs,
+            repeat_pattern: reminder.repeat_pattern,
+          },
+          'skipped_due_to_late'
+        );
+      } else {
+        await bot.api.sendMessage(reminder.user_id, reminder.message);
+        await markReminderSent(reminder.id);
+        sentCount += 1;
+      }
       if (reminder.repeat_pattern) {
-        const user = await getUser(reminder.user_id);
-        const timeZone = user?.timezone || 'Europe/Moscow';
-        const nextTriggerAt = getNextTriggerAt(reminder.trigger_at, reminder.repeat_pattern, timeZone);
+        const nextTriggerAt = getNextFutureTriggerAt(
+          reminder.trigger_at,
+          reminder.repeat_pattern,
+          MSK_TIMEZONE,
+          now
+        );
         if (nextTriggerAt) {
           await addReminder({
             user_id: reminder.user_id,
@@ -39,6 +66,9 @@ export async function processReminders(): Promise<number> {
     } catch (error) {
       logger.error({ error, reminderId: reminder.id, userId: reminder.user_id }, 'Ошибка отправки напоминания');
     }
+  }
+  if (sentCount > 0 || skippedCount > 0) {
+    logger.info({ sentCount, skippedCount, total: reminders.length }, 'Напоминания обработаны');
   }
   return sentCount;
 }
