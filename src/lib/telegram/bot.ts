@@ -1,6 +1,8 @@
 import { Bot } from 'grammy';
 import { handleTextMessage } from './handlers/text';
 import { handleVoiceMessage } from './handlers/voice';
+import { handlePhotoMessage } from './handlers/photo';
+import { handleDocumentMessage } from './handlers/document';
 import { logger } from '@/lib/utils/logger';
 
 const token = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -21,6 +23,8 @@ bot.on('message:text', async (ctx) => {
   }
 });
 bot.on('message:voice', handleVoiceMessage);
+bot.on('message:photo', handlePhotoMessage);
+bot.on('message:document', handleDocumentMessage);
 
 // Обработка ошибок бота
 bot.catch((err) => {

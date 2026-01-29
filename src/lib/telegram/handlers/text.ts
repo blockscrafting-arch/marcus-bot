@@ -9,6 +9,7 @@ import { getRecentMessages, saveMessage } from '@/lib/db/messages';
 import { ensureDailyCareReminder } from '@/lib/services/care';
 import { formatUserTime } from '@/lib/utils/time';
 import { rateLimit } from '@/lib/utils/rateLimit';
+import { needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
 import { logger } from '@/lib/utils/logger';
 
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 25000);
@@ -112,6 +113,50 @@ function buildToolResponse(
     };
   }
 
+  const researchTool = toolResponses.find((item) => item.name === 'deep_research');
+  if (researchTool?.result?.content) {
+    const content = String(researchTool.result.content).trim();
+    if (content) {
+      const reply =
+        content.length <= TELEGRAM_MESSAGE_MAX_LENGTH
+          ? content
+          : content.slice(0, TELEGRAM_MESSAGE_MAX_LENGTH - 50) + '\n\n… (текст обрезан)';
+      return { reply, skipModel: true };
+    }
+  }
+
+  const searchTool = toolResponses.find((item) => item.name === 'search_web');
+  if (searchTool) {
+    const result = searchTool.result;
+    if (result?.fallback === true && result?.content) {
+      const content = String(result.content).trim();
+      if (content) {
+        const reply =
+          content.length <= TELEGRAM_MESSAGE_MAX_LENGTH
+            ? content
+            : content.slice(0, TELEGRAM_MESSAGE_MAX_LENGTH - 50) + '\n\n… (текст обрезан)';
+        return { reply, skipModel: true };
+      }
+    }
+    const results = (result?.results || []) as Array<{ title?: string; content?: string; url?: string }>;
+    if (results.length > 0) {
+      const lines = results.slice(0, 3).map((r) => {
+        const title = r.title || 'Без названия';
+        const snippet = (r.content || '').slice(0, 200).trim();
+        return snippet ? `${title}\n${snippet}` : title;
+      });
+      const reply = lines.join('\n\n');
+      return {
+        reply: reply.length <= TELEGRAM_MESSAGE_MAX_LENGTH ? reply : reply.slice(0, TELEGRAM_MESSAGE_MAX_LENGTH - 30) + '\n\n…',
+        skipModel: true,
+      };
+    }
+    return {
+      reply: 'Не удалось найти информацию по запросу. Попробуй переформулировать.',
+      skipModel: true,
+    };
+  }
+
   return null;
 }
 
@@ -120,6 +165,19 @@ function mapRepeatLabel(pattern: string): string {
   if (pattern === 'weekly') return 'еженедельно';
   if (pattern === 'monthly') return 'ежемесячно';
   return pattern;
+}
+
+/**
+ * Удаляет сырые теги function_results/result/function из ответа LLM.
+ */
+function sanitizeReply(text: string): string {
+  if (!text?.trim()) return text;
+  let out = text
+    .replace(/<\/?function_results>/gi, '')
+    .replace(/<\/?result>/gi, '')
+    .replace(/<\/?function>/gi, '');
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+  return out || text.trim();
 }
 
 function safeJsonParse(value: string): Record<string, any> {
@@ -142,19 +200,40 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   ]);
 }
 
+/** Лимит длины сообщения от пользователя (ввод с клавиатуры). */
+const USER_MESSAGE_MAX_LENGTH = 2000;
+/** Лимит для длинных сообщений (документ/фото): обрезка перед отправкой в LLM. */
+const LONG_MESSAGE_MAX_LENGTH = 32_000;
+/** Максимальная длина одного ответа в Telegram. */
+const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
+
+export type HandleTextMessageOptions = {
+  /** Разрешить длинное сообщение (из документа/фото), не резать по 2000. */
+  allowLongMessage?: boolean;
+};
+
 /**
  * Обработка текстового сообщения пользователя.
  */
-export async function handleTextMessage(ctx: Context, messageText: string): Promise<void> {
+export async function handleTextMessage(
+  ctx: Context,
+  messageText: string,
+  options?: HandleTextMessageOptions
+): Promise<void> {
   const user = ctx.from;
   if (!user?.id) {
     logger.error('Не удалось получить информацию о пользователе');
     return;
   }
 
-  if (messageText.length > 2000) {
-    await ctx.reply('Сообщение слишком длинное. Сократи текст и повтори.');
-    return;
+  const maxLength = options?.allowLongMessage ? LONG_MESSAGE_MAX_LENGTH : USER_MESSAGE_MAX_LENGTH;
+  if (messageText.length > maxLength) {
+    if (options?.allowLongMessage) {
+      messageText = messageText.slice(0, LONG_MESSAGE_MAX_LENGTH);
+    } else {
+      await ctx.reply('Сообщение слишком длинное. Сократи текст и повтори.');
+      return;
+    }
   }
 
   const telegramId = user.id;
@@ -215,7 +294,11 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
       ? ({ type: 'function', function: { name: 'list_reminders' } } as const)
       : isReminderIntent(messageText)
         ? ({ type: 'function', function: { name: 'add_reminder' } } as const)
-        : 'auto';
+        : needsDeepResearch(messageText)
+          ? ({ type: 'function', function: { name: 'deep_research' } } as const)
+          : needsSearch(messageText)
+            ? ({ type: 'function', function: { name: 'search_web' } } as const)
+            : 'auto';
 
     const response = await withTimeout(
       openRouter.chat.completions.create({
@@ -279,7 +362,8 @@ export async function handleTextMessage(ctx: Context, messageText: string): Prom
       assistantMessage = secondResponse.choices[0]?.message;
     }
 
-    const botReply = assistantMessage?.content || 'Ошибка при получении ответа от AI';
+    const rawReply = assistantMessage?.content || 'Ошибка при получении ответа от AI';
+    const botReply = sanitizeReply(rawReply);
 
     try {
       await ctx.reply(botReply);

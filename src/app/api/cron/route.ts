@@ -2,10 +2,7 @@ import { NextRequest } from 'next/server';
 import { processDailySummaries, processReminders } from '@/lib/services/scheduler';
 import { logger } from '@/lib/utils/logger';
 
-/**
- * Cron endpoint для напоминаний и ежедневных саммари.
- */
-export async function POST(req: NextRequest): Promise<Response> {
+async function runCron(): Promise<Response> {
   try {
     const remindersSent = await processReminders();
     const summariesSent = await processDailySummaries();
@@ -17,5 +14,17 @@ export async function POST(req: NextRequest): Promise<Response> {
     logger.error({ error }, 'Ошибка при выполнении cron');
     return new Response('Internal Server Error', { status: 500 });
   }
+}
+
+/**
+ * Cron endpoint для напоминаний и ежедневных саммари.
+ * Поддерживает GET и POST — внешние сервисы часто вызывают GET.
+ */
+export async function GET(req: NextRequest): Promise<Response> {
+  return runCron();
+}
+
+export async function POST(req: NextRequest): Promise<Response> {
+  return runCron();
 }
 

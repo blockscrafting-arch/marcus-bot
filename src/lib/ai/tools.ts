@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { searchWeb } from '@/lib/services/search';
+import { deepResearch } from '@/lib/services/research';
 import { saveMemory } from '@/lib/db/memories';
 import { addTask, listTasks } from '@/lib/db/tasks';
 import { addReminder, listUpcomingReminders } from '@/lib/db/reminders';
@@ -19,11 +20,26 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'search_web',
-      description: 'Поиск в интернете для проверки фактов',
+      description: 'Быстрый поиск в интернете для фактов, цен, новостей, "как сделать"',
       parameters: {
         type: 'object',
         properties: {
           query: { type: 'string' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'deep_research',
+      description:
+        'Глубокое исследование сложного вопроса. ОБЯЗАТЕЛЬНО используй для: сравнений (X vs Y), анализа рынка, сложных многогранных вопросов, медицинских/юридических/финансовых тем. Исследует сотни источников.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Вопрос для глубокого исследования' },
         },
         required: ['query'],
       },
@@ -153,8 +169,24 @@ export async function executeToolCall(
 
   try {
     if (name === 'search_web') {
-      const results = await searchWeb(args.query || '');
-      return JSON.stringify({ results });
+      const query = String(args.query || '');
+      const results = await searchWeb(query);
+      if (results.length > 0) {
+        return JSON.stringify({ results });
+      }
+      const perplexityKey = process.env.PERPLEXITY_API_KEY;
+      if (perplexityKey) {
+        logger.info({ query: query.slice(0, 80) }, 'search_web пустой — fallback на Perplexity');
+        const { content, citations } = await deepResearch(query);
+        return JSON.stringify({ fallback: true, content, citations: citations ?? [] });
+      }
+      return JSON.stringify({ results: [], fallback: false });
+    }
+
+    if (name === 'deep_research') {
+      const query = String(args.query || '');
+      const { content, citations } = await deepResearch(query);
+      return JSON.stringify({ content, citations: citations ?? [] });
     }
 
     if (name === 'add_memory') {

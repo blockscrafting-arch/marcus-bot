@@ -12,6 +12,7 @@ type SearchResult = {
 export async function searchWeb(query: string): Promise<SearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY || '';
   if (!apiKey) {
+    logger.warn({ query: query.slice(0, 80) }, 'Tavily: TAVILY_API_KEY не задан');
     return [];
   }
 
@@ -31,14 +32,22 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
     });
 
     if (!response.ok) {
-      logger.error({ status: response.status }, 'Ошибка поиска Tavily');
+      const bodyText = await response.text();
+      logger.error(
+        { status: response.status, body: bodyText.slice(0, 500), query: query.slice(0, 80) },
+        'Ошибка поиска Tavily'
+      );
       return [];
     }
 
     const data = await response.json();
-    return (data.results || []) as SearchResult[];
+    const results = (data.results || []) as SearchResult[];
+    if (!results.length) {
+      logger.info({ query: query.slice(0, 80) }, 'Tavily: пустой результат');
+    }
+    return results;
   } catch (error) {
-    logger.error({ error }, 'Ошибка при запросе к Tavily');
+    logger.error({ error, query: query.slice(0, 80) }, 'Ошибка при запросе к Tavily');
     return [];
   }
 }
