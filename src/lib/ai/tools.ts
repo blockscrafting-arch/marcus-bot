@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { searchWeb } from '@/lib/services/search';
-import { deepResearch } from '@/lib/services/research';
+import { deepResearch, quickSearch } from '@/lib/services/research';
 import { saveMemory, matchMemories } from '@/lib/db/memories';
 import { addTask, listTasks } from '@/lib/db/tasks';
 import { addReminder, listUpcomingReminders } from '@/lib/db/reminders';
@@ -204,8 +204,8 @@ export async function executeToolCall(
       }
       const perplexityKey = process.env.PERPLEXITY_API_KEY;
       if (perplexityKey) {
-        logger.info({ query: query.slice(0, 80) }, 'search_web пустой — fallback на Perplexity');
-        const { content, citations } = await deepResearch(query);
+        logger.info({ query: query.slice(0, 80) }, 'search_web пустой — fallback на Perplexity (sonar)');
+        const { content, citations } = await quickSearch(query);
         return JSON.stringify({ fallback: true, content, citations: citations ?? [] });
       }
       return JSON.stringify({ results: [], fallback: false });

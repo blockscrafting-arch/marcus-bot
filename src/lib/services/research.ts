@@ -3,8 +3,86 @@ import { logger } from '@/lib/utils/logger';
 const PERPLEXITY_BASE_URL = 'https://api.perplexity.ai';
 const DEEP_RESEARCH_MODEL = 'sonar-deep-research';
 const RESEARCH_TIMEOUT_MS = 180_000; // 3 минуты для глубокого исследования
+const SONAR_MODEL = 'sonar';
+const SEARCH_TIMEOUT_MS = 30_000; // быстрый поиск через Sonar
 
 type PerplexityMessage = { role: 'user' | 'system' | 'assistant'; content: string };
+
+/**
+ * Быстрый web-поиск через Perplexity Sonar (лёгкая модель).
+ * Используется как fallback для search_web при отсутствии Tavily.
+ */
+export async function quickSearch(query: string): Promise<{ content: string; citations?: string[] }> {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) {
+    logger.error('PERPLEXITY_API_KEY не задан');
+    return { content: 'Сервис поиска не настроен. Добавь PERPLEXITY_API_KEY.' };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${PERPLEXITY_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: SONAR_MODEL,
+        messages: [{ role: 'user', content: query }] as PerplexityMessage[],
+        max_tokens: 1536,
+        temperature: 0.2,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errText = await response.text();
+      logger.error(
+        { status: response.status, body: errText, query: query.slice(0, 100) },
+        'Ошибка Perplexity Sonar API'
+      );
+      return {
+        content: 'Не удалось выполнить поиск. Попробуй позже или упрости вопрос.',
+      };
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      citations?: string[];
+    };
+    const content = data.choices?.[0]?.message?.content ?? '';
+    const citations = data.citations;
+
+    if (!content) {
+      logger.warn({ query: query.slice(0, 100) }, 'Perplexity Sonar вернул пустой ответ');
+      return { content: 'Ответ пуст. Попробуй переформулировать вопрос.', citations };
+    }
+
+    const citationBlock =
+      citations?.length && citations.length > 0
+        ? `\n\nИсточники:\n${citations.map((url, i) => `${i + 1}. ${url}`).join('\n')}`
+        : '';
+    return { content: content + citationBlock, citations };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error) {
+      if (err.name === 'AbortError') {
+        logger.error({ query: query.slice(0, 100) }, 'Таймаут Perplexity Sonar');
+        return {
+          content: 'Поиск занял слишком много времени. Попробуй сузить вопрос.',
+        };
+      }
+      logger.error({ err, query: query.slice(0, 100) }, 'Ошибка при вызове Perplexity Sonar');
+    }
+    return {
+      content: 'Произошла ошибка при поиске. Попробуй позже.',
+    };
+  }
+}
 
 /**
  * Выполняет глубокое исследование через Perplexity Sonar Deep Research.
