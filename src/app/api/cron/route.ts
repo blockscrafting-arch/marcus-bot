@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { processDailySummaries, processReminders } from '@/lib/services/scheduler';
+import { processProactiveMessages } from '@/lib/services/proactive';
 import { logger } from '@/lib/utils/logger';
 import { cleanupProcessedUpdates } from '@/lib/db/updates';
 import { cleanupMediaGroups } from '@/lib/db/media-groups';
@@ -8,9 +9,10 @@ async function runCron(): Promise<Response> {
   try {
     const remindersSent = await processReminders();
     const summariesSent = await processDailySummaries();
+    const proactiveSent = await processProactiveMessages();
     await cleanupProcessedUpdates(7);
     await cleanupMediaGroups(6);
-    return new Response(JSON.stringify({ remindersSent, summariesSent }), {
+    return new Response(JSON.stringify({ remindersSent, summariesSent, proactiveSent }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
