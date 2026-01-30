@@ -20,8 +20,8 @@ export async function analyzeImages(imageUrls: string[], userPrompt?: string): P
 
   try {
     const contentParts = [
-      { type: 'text', text: prompt },
-      ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
+      { type: 'text' as const, text: prompt },
+      ...imageUrls.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
     ];
     const response = await openRouter.chat.completions.create(
       {
