@@ -56,9 +56,7 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
   }
 }
 
-const BRAVE_WEB_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
-
-/**
+const BRAVE_WEB_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';/**
  * Выполняет web поиск через Brave Search API.
  * Используется как fallback при пустом/ошибочном ответе Tavily.
  */
@@ -67,18 +65,14 @@ export async function braveSearch(query: string): Promise<SearchResult[]> {
   if (!apiKey) {
     logger.warn({ query: query.slice(0, 80) }, 'Brave: BRAVE_API_KEY не задан');
     return [];
-  }
-
-  try {
+  }  try {
     const url = `${BRAVE_WEB_SEARCH_URL}?q=${encodeURIComponent(query)}`;
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'X-Subscription-Token': apiKey,
       },
-    });
-
-    if (!response.ok) {
+    });    if (!response.ok) {
       const bodyText = await response.text();
       logger.error(
         { status: response.status, body: bodyText.slice(0, 500), query: query.slice(0, 80) },
@@ -100,4 +94,3 @@ export async function braveSearch(query: string): Promise<SearchResult[]> {
     return [];
   }
 }
-

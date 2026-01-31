@@ -147,6 +147,47 @@ function mapRepeatLabel(pattern: string): string {
   return pattern;
 }
 
+/** Максимальная длина fallback-ответа из результатов инструментов (символы). */
+const FALLBACK_REPLY_MAX = 3500;
+
+/**
+ * Формирует ответ из результатов search_web/deep_research, когда второй вызов LLM вернул пустой content.
+ */
+function getFallbackReplyFromToolResponses(toolResponses: ToolResponse[]): string | null {
+  if (toolResponses.length === 0) return null;
+
+  const truncate = (s: string, max: number = FALLBACK_REPLY_MAX) =>
+    s.length <= max ? s : s.slice(0, max - 3) + '...';
+
+  const deepResearch = toolResponses.find((r) => r.name === 'deep_research');
+  if (deepResearch?.result?.content && typeof deepResearch.result.content === 'string') {
+    const content = String(deepResearch.result.content).trim();
+    if (content) return truncate(content);
+  }
+
+  const searchWeb = toolResponses.find((r) => r.name === 'search_web');
+  if (searchWeb?.result) {
+    const { fallback, content, results } = searchWeb.result;
+    if (fallback && content && typeof content === 'string') {
+      const trimmed = String(content).trim();
+      if (trimmed) return truncate(trimmed);
+    }
+    const arr = Array.isArray(results) ? results : [];
+    if (arr.length > 0) {
+      const lines = arr.slice(0, 5).map((item: Record<string, any>) => {
+        const title = item.title || item.name || 'Без названия';
+        const url = item.url || '';
+        const snippet = item.snippet || item.description || '';
+        return url ? `${title}\n${url}${snippet ? '\n' + snippet : ''}` : `${title}${snippet ? '\n' + snippet : ''}`;
+      });
+      const text = lines.join('\n\n');
+      if (text.trim()) return truncate(text);
+    }
+  }
+
+  return null;
+}
+
 /**
  * Удаляет сырые теги function_results/result/function из ответа LLM.
  */
@@ -559,11 +600,12 @@ export async function handleTextMessage(
     );
 
     let assistantMessage = response.choices[0]?.message;
+    let toolResponses: ToolResponse[] = [];
     if (assistantMessage?.tool_calls?.length) {
       const toolNames = assistantMessage.tool_calls.map((t) => t.function.name).join(', ');
       await updateStatus(ctx, status, `Выполняю инструменты: ${toolNames}...`);
 
-      const toolResponses: ToolResponse[] = [];
+      toolResponses = [];
       logger.info(
         { userId: telegramId, toolCalls: assistantMessage.tool_calls.map((t) => t.function.name) },
         'Модель запросила инструменты'
@@ -614,7 +656,17 @@ export async function handleTextMessage(
       assistantMessage = secondResponse.choices[0]?.message;
     }
 
-    const rawReply = assistantMessage?.content || 'Ошибка при получении ответа от AI';
+    const contentFromModel = assistantMessage?.content?.trim() || '';
+    const fallbackFromTools = getFallbackReplyFromToolResponses(toolResponses);
+    const neutralMessage =
+      'Не удалось сформулировать ответ. Попробуйте переформулировать вопрос или задать его иначе.';
+    const rawReply = contentFromModel || fallbackFromTools || neutralMessage;
+    if (!contentFromModel && (fallbackFromTools || rawReply === neutralMessage)) {
+      logger.warn(
+        { userId: telegramId, usedFallback: !!fallbackFromTools, usedNeutral: rawReply === neutralMessage },
+        'Ответ модели пустой: использован fallback из инструментов или нейтральная фраза'
+      );
+    }
     const botReply = sanitizeReply(rawReply);
 
     try {
