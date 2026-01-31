@@ -2,7 +2,7 @@ import bot from '@/lib/telegram/bot';
 import { openRouter, defaultChatModel } from '@/lib/ai/client';
 import { getProactivePrompt } from '@/lib/ai/proactive-prompt';
 import { retrieveMemories } from '@/lib/ai/memory/retrieval';
-import { listUsersWithPreference } from '@/lib/db/users';
+import { listUsers } from '@/lib/db/users';
 import { getProactiveState, upsertProactiveState, resetDailyCountIfNeeded } from '@/lib/db/proactive';
 import { getLastUserMessageTime, getRecentMessages } from '@/lib/db/messages';
 import { listTasks } from '@/lib/db/tasks';
@@ -18,7 +18,7 @@ const PROACTIVE_WINDOW_END_HOUR = 22;
 const PROACTIVE_WINDOW_END_MINUTE = 0;
 const CARE_HOUR_MSK = 20;
 const CARE_BUFFER_MINUTES = 30;
-const MIN_SINCE_LAST_USER_MSG_MS = 75 * 60 * 1000; // 75 min
+const MIN_SINCE_LAST_USER_MSG_MS = 45 * 60 * 1000; // 45 min
 const MAX_PROACTIVE_PER_DAY = 4;
 const MIN_INTERVAL_HOURS = 2;
 const MAX_INTERVAL_HOURS = 4;
@@ -50,12 +50,13 @@ function simpleHash(text: string): string {
 }
 
 /**
- * Отправляет проактивные сообщения пользователям с preferences.proactive.
- * Учитывает окно 08:30–22:00 MSK, паузу после последнего сообщения пользователя, окрестность care 20:00, лимит 3–4/день и интервал 2–4 ч.
+ * Отправляет проактивные сообщения. По умолчанию — всем пользователям; отключить можно через preferences.proactive = false.
+ * Учитывает окно 08:30–22:00 MSK, паузу после последнего сообщения, окрестность care 20:00, лимит 3–4/день и интервал 2–4 ч.
  */
 export async function processProactiveMessages(): Promise<number> {
   const now = new Date();
-  const users = await listUsersWithPreference('proactive');
+  const allUsers = await listUsers();
+  const users = allUsers.filter((u) => (u.preferences as Record<string, unknown>)?.proactive !== false);
   if (!users.length) return 0;
 
   try {
@@ -96,10 +97,14 @@ export async function processProactiveMessages(): Promise<number> {
     const upcomingReminders = await listUpcomingReminders(userId, 3);
 
     const currentTime = formatUserTime(timeZone, now);
+    const local = getLocalParts(now, timeZone);
+    const timeOfDay: 'morning' | 'afternoon' | 'evening' =
+      local.hour < 12 ? 'morning' : local.hour < 17 ? 'afternoon' : 'evening';
     const proactiveContext = {
       userName,
       currentTime,
       timeZone,
+      timeOfDay,
       tasks: tasks.slice(0, 3).map((t) => ({
         title: t.title,
         description: t.description,

@@ -16,8 +16,8 @@ import { rateLimit } from '@/lib/utils/rateLimit';
 import { needsCurrentTime, needsDeepResearch, needsSearch } from '@/lib/utils/complexity';
 import { logger } from '@/lib/utils/logger';
 
-const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 25000);
-const EXTRACTION_TIMEOUT_MS = 15000;
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 50000);
+const EXTRACTION_TIMEOUT_MS = 20000;
 /** Лимит символов контекста для extraction (сообщение + ответ), чтобы не упереться в лимит токенов. */
 const EXTRACTION_MESSAGE_MAX = 3000;
 const EXTRACTION_REPLY_MAX = 2000;
@@ -446,7 +446,8 @@ async function maybePersistArtifacts(
       });
     }
   } catch (err) {
-    logger.error({ err, userId }, 'Ошибка extraction/persist артефактов');
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err, errMsg, userId }, 'Ошибка extraction/persist артефактов');
   }
 }
 
@@ -628,13 +629,15 @@ export async function handleTextMessage(
     await maybePersistArtifacts(telegramId, timeZone, messageText, botReply);
     await finalizeStatus(ctx, status);
   } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errName = error instanceof Error ? error.name : undefined;
     logger.error(
-      { err: error, userId: telegramId, model: defaultChatModel, timeoutMs: OPENROUTER_TIMEOUT_MS },
+      { err: error, errMsg, errName, userId: telegramId, model: defaultChatModel, timeoutMs: OPENROUTER_TIMEOUT_MS },
       'Ошибка при обработке сообщения'
     );
     await updateStatus(ctx, status, 'Ошибка при обработке запроса');
     let errorMessage = 'Произошла ошибка при обработке вашего сообщения. Попробуйте позже.';
-    if (error instanceof Error && error.message.includes('Timeout')) {
+    if (errMsg.includes('Timeout') || errName === 'AbortError') {
       errorMessage = 'Запрос занял слишком много времени. Попробуйте позже.';
     }
     try {
